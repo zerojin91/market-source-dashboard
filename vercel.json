@@ -1,0 +1,22 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/quotes.js": {
+      "maxDuration": 30
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/",
+      "destination": "/public/index.html"
+    },
+    {
+      "source": "/app.js",
+      "destination": "/public/app.js"
+    },
+    {
+      "source": "/styles.css",
+      "destination": "/public/styles.css"
+    }
+  ]
+}

@@ -324,7 +324,7 @@ async function getNightFutures() {
   return result;
 }
 
-async function getQuotes() {
+export async function getQuotes() {
   const settled = await Promise.allSettled([getKospilab(), getNightFutures()]);
   const [kospilab, nightFutures] = settled.map((entry) =>
     entry.status === "fulfilled" ? entry.value : { error: entry.reason.message },
@@ -367,16 +367,18 @@ async function serveStatic(req, res) {
   }
 }
 
-createServer(async (req, res) => {
-  try {
-    if (req.url?.startsWith("/api/quotes")) {
-      json(res, 200, await getQuotes());
-      return;
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  createServer(async (req, res) => {
+    try {
+      if (req.url?.startsWith("/api/quotes")) {
+        json(res, 200, await getQuotes());
+        return;
+      }
+      await serveStatic(req, res);
+    } catch (error) {
+      json(res, 500, { error: error.message });
     }
-    await serveStatic(req, res);
-  } catch (error) {
-    json(res, 500, { error: error.message });
-  }
-}).listen(port, () => {
-  console.log(`Market source dashboard: http://localhost:${port}`);
-});
+  }).listen(port, () => {
+    console.log(`Market source dashboard: http://localhost:${port}`);
+  });
+}
