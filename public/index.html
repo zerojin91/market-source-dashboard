@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>시장 데이터 통합 대시보드</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="https://cdn.socket.io/4.8.3/socket.io.min.js" defer></script>
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">10초 자동 갱신</p>
+          <h1>시장 데이터 통합 대시보드</h1>
+        </div>
+        <div class="status-panel" aria-live="polite">
+          <span id="liveDot" class="live-dot"></span>
+          <div>
+            <span class="muted">마지막 업데이트</span>
+            <strong id="lastUpdated">대기 중</strong>
+          </div>
+        </div>
+      </header>
+
+      <section class="source-strip" aria-label="데이터 출처">
+        <a href="https://kospilab.com/" target="_blank" rel="noreferrer">KOSPI LAB</a>
+        <a href="https://esignal.co.kr/kospi200-futures-night/" target="_blank" rel="noreferrer">eSignal 야간선물</a>
+      </section>
+
+      <section class="section-block" aria-labelledby="indicesTitle">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">KOSPI LAB</p>
+            <h2 id="indicesTitle">지수</h2>
+          </div>
+          <span class="source-chip">https://kospilab.com/</span>
+        </div>
+        <div id="indicesGrid" class="card-grid"></div>
+      </section>
+
+      <section class="section-block" aria-labelledby="stocksTitle">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">KOSPI LAB</p>
+            <h2 id="stocksTitle">국내 주식</h2>
+          </div>
+          <span class="source-chip">삼성전자 · SK하이닉스</span>
+        </div>
+        <div id="stocksGrid" class="card-grid two"></div>
+      </section>
+
+      <section class="section-block" aria-labelledby="nightTitle">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">eSignal</p>
+            <h2 id="nightTitle">코스피 200 야간 선물</h2>
+          </div>
+          <span class="source-chip">https://esignal.co.kr/kospi200-futures-night/</span>
+        </div>
+        <div id="nightGrid" class="card-grid one"></div>
+      </section>
+
+      <footer class="footer-note">
+        외부 공개 페이지를 주기적으로 읽어 표시하는 참고용 화면입니다. 실제 매매 전에는 공식 거래소나 증권사 HTS에서 다시 확인하세요.
+      </footer>
+    </main>
+  </body>
+</html>
