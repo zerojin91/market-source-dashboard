@@ -27,6 +27,14 @@ function clean(value, fallback = "-") {
   return value === null || value === undefined || value === "" ? fallback : value;
 }
 
+function formatEsignalTime(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return clean(value, null);
+
+  const adjusted = numeric >= 250000 ? numeric - 240000 : numeric;
+  return String(adjusted).padStart(6, "0").match(/.{2}/g).join(":");
+}
+
 function detailRows(rows) {
   return `
     <dl class="detail-list">
@@ -129,9 +137,9 @@ function render(payload) {
     renderError($("#stocksGrid"), "KOSPI LAB 주식 데이터를 읽지 못했습니다.");
   }
 
-  if (payload.nightFutures?.item) {
+  if (!state.nightSocketHasData && payload.nightFutures?.item) {
     $("#nightGrid").innerHTML = nightCard(payload.nightFutures.item, payload.nightFutures);
-  } else {
+  } else if (!state.nightSocketHasData) {
     renderError($("#nightGrid"), "eSignal 야간선물 데이터를 읽지 못했습니다.");
   }
 }
@@ -158,7 +166,7 @@ function patchNightFromSocket(raw) {
     }
   }
 
-  const close = Number(data.close1);
+  const close = Number(data.value_day ?? data.close1);
   const value = Number(data.value);
   const diff = Number(data.value_diff);
   const percent = Number.isFinite(value) && Number.isFinite(close) && close !== 0
@@ -181,7 +189,7 @@ function patchNightFromSocket(raw) {
     volume: data.volume ? Number(data.volume).toLocaleString("ko-KR") : null,
     bid: data.bid1_price ? `${Number(data.bid1_price).toFixed(2)} (${clean(data.bid1_vol)})` : null,
     ask: data.ask1_price ? `${Number(data.ask1_price).toFixed(2)} (${clean(data.ask1_vol)})` : null,
-    updatedAt: data.time_format || new Date().toLocaleTimeString("ko-KR"),
+    updatedAt: formatEsignalTime(data.ttime ?? data.time_format),
   };
 
   state.nightSocketConnected = true;
@@ -205,7 +213,7 @@ function connectNightSocket() {
       state.nightSocketConnected = true;
     });
 
-    socket.on("kospif_ngt", patchNightFromSocket);
+    socket.on("populate", patchNightFromSocket);
     socket.on("disconnect", () => {
       state.nightSocketConnected = false;
       state.nightSocketHasData = false;
