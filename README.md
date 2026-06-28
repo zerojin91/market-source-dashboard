@@ -1,5 +1,7 @@
 # Market Source Dashboard
 
+Project working notes are kept in [docs/PROJECT_NOTES.md](docs/PROJECT_NOTES.md).
+
 KOSPI LAB과 eSignal의 공개 페이지를 한 화면에서 보는 10초 갱신 대시보드입니다.
 
 ## 포함 데이터
