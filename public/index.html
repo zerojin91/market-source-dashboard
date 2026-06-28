@@ -3,23 +3,50 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>시장 데이터 통합 대시보드</title>
+    <title>QunatLab</title>
     <link rel="stylesheet" href="/styles.css" />
     <script src="https://cdn.socket.io/4.8.3/socket.io.min.js" defer></script>
     <script src="/app.js" defer></script>
   </head>
   <body>
     <main class="shell">
-      <header class="topbar">
-        <div>
-          <p class="eyebrow">10초 자동 갱신</p>
-          <h1>시장 데이터 통합 대시보드</h1>
+      <header class="dashboard-header">
+        <div class="header-cluster header-left">
+          <div class="market-pill strong">
+            <span class="live-dot active"></span>
+            <strong id="realtimeStatus">해외 실시간 추정가</strong>
+          </div>
+          <div class="market-pill">
+            <span class="status-dot"></span>
+            <strong id="domesticStatus">국내장 확인 중</strong>
+            <span aria-hidden="true">·</span>
+            <span id="marketCountdown">개장 시간 계산 중</span>
+          </div>
         </div>
-        <div class="status-panel" aria-live="polite">
-          <span id="liveDot" class="live-dot"></span>
-          <div>
-            <span class="muted">마지막 업데이트</span>
-            <strong id="lastUpdated">대기 중</strong>
+
+        <div class="header-brand">
+          <h1>QunatLab</h1>
+          <p>국내주식 시세 비교 대시보드</p>
+        </div>
+
+        <div class="header-cluster header-right">
+          <div class="market-pill fx-pill">
+            <span>USD/KRW</span>
+            <strong id="fxRate">-</strong>
+            <span id="fxChange" class="down"></span>
+          </div>
+          <div class="market-pill time-pill">
+            <span aria-hidden="true">↻</span>
+            <span id="localClock">--:--:--</span>
+          </div>
+          <div class="market-pill icon-pill" aria-label="10초 자동 갱신">
+            <span id="liveDot" class="live-dot"></span>
+          </div>
+          <div class="status-panel" aria-live="polite">
+            <div>
+              <span class="muted">마지막 업데이트</span>
+              <strong id="lastUpdated">대기 중</strong>
+            </div>
           </div>
         </div>
       </header>
@@ -27,6 +54,18 @@
       <section class="source-strip" aria-label="데이터 출처">
         <a href="https://kospilab.com/" target="_blank" rel="noreferrer">KOSPI LAB</a>
         <a href="https://esignal.co.kr/kospi200-futures-night/" target="_blank" rel="noreferrer">eSignal 야간선물</a>
+      </section>
+
+      <section class="news-panel" aria-label="시장 뉴스">
+        <div class="news-toolbar">
+          <div class="news-tabs" role="tablist" aria-label="뉴스 탭">
+            <button class="news-tab active" type="button" data-news-tab="top">오늘 주요 뉴스</button>
+            <button class="news-tab" type="button" data-news-tab="latest">뉴스</button>
+          </div>
+          <span class="news-updated">업데이트 <strong id="newsUpdated">대기 중</strong></span>
+        </div>
+        <div id="topNewsList" class="news-list active" data-news-panel="top"></div>
+        <div id="latestNewsList" class="news-list" data-news-panel="latest"></div>
       </section>
 
       <section class="section-block" aria-labelledby="indicesTitle">

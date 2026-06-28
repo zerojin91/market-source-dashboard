@@ -7,6 +7,11 @@ const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const root = normalize(join(__dirname, ".."));
 const publicDir = join(root, "public");
 const port = Number(process.env.PORT || 3000);
+const NEWS_CACHE_MS = 5 * 60 * 1000;
+let newsCache = {
+  expiresAt: 0,
+  payload: null,
+};
 
 const SOURCES = {
   kospilab: "https://kospilab.com/",
@@ -14,6 +19,8 @@ const SOURCES = {
   naverIndex: "https://polling.finance.naver.com/api/realtime/domestic/index/KOSPI,KOSDAQ",
   yahooIxic: "https://query1.finance.yahoo.com/v8/finance/chart/%5EIXIC",
   yahooGspc: "https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC",
+  savetickerNews: "https://www.saveticker.com/news",
+  savetickerApi: "https://api.saveticker.com/api",
 };
 
 const mimeTypes = {
@@ -68,6 +75,7 @@ function decodeHtml(input = "") {
 }
 
 function htmlToText(html = "") {
+  html = String(html || "");
   return decodeHtml(
     html
       .replace(/<script[\s\S]*?<\/script>/gi, " ")
@@ -205,6 +213,22 @@ function parseStock(text, name) {
   };
 }
 
+function parseKospilabMeta(text) {
+  const fx = text.match(/USD\/KRW\s*₩\s*([\d,]+)\s*([+-]?\d+(?:\.\d+)?)/);
+
+  return {
+    priceMode: text.includes("해외 실시간 추정가") ? "해외 실시간 추정가" : null,
+    domesticStatus: text.includes("국내장마감") ? "국내장마감" : text.includes("국내장") ? "국내장" : null,
+    fx: fx
+      ? {
+          pair: "USD/KRW",
+          rate: `₩${fx[1]}`,
+          change: fx[2],
+        }
+      : null,
+  };
+}
+
 async function getKospilab() {
   const html = await fetchText(SOURCES.kospilab);
   const text = htmlToText(html);
@@ -246,6 +270,7 @@ async function getKospilab() {
   return {
     source: SOURCES.kospilab,
     fetchedAt: new Date().toISOString(),
+    marketMeta: parseKospilabMeta(text),
     notes,
     items: [...indices, ...stocks],
   };
@@ -262,6 +287,116 @@ function latestPointFromCache(cache) {
 async function tryFetchJson(url) {
   const text = await fetchText(url, 5000);
   return JSON.parse(text);
+}
+
+function pickTranslation(item, key) {
+  return item?.translations?.translated?.ko_KR?.[key] || item?.translations?.translated?.ko?.[key] || item?.[key] || "";
+}
+
+function valueToText(value) {
+  if (!value) return "";
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  if (Array.isArray(value)) return value.map(valueToText).filter(Boolean).join(" ");
+  if (typeof value === "object") {
+    for (const key of ["text", "title", "summary", "description", "content", "body", "ko_KR", "ko"]) {
+      const text = valueToText(value[key]);
+      if (text) return text;
+    }
+  }
+  return "";
+}
+
+function normalizeThumbnail(thumbnail) {
+  if (!thumbnail) return null;
+  if (/^https?:\/\//i.test(thumbnail)) return thumbnail;
+  return `https://api.saveticker.com${thumbnail.startsWith("/") ? "" : "/"}${thumbnail}`;
+}
+
+function normalizeNewsItem(item) {
+  const title = htmlToText(valueToText(pickTranslation(item, "title")));
+  const summary = htmlToText(
+    valueToText(
+      pickTranslation(item, "summary") ||
+        pickTranslation(item, "content") ||
+        item?.content ||
+        "",
+    ),
+  ).slice(0, 160);
+
+  return {
+    id: String(item?.id || ""),
+    title,
+    summary,
+    source: item?.source || "SaveTicker",
+    author: item?.author_name || null,
+    createdAt: item?.created_at || null,
+    viewCount: item?.view_count ?? null,
+    tags: Array.isArray(item?.tag_names) ? item.tag_names.slice(0, 3) : [],
+    thumbnail: normalizeThumbnail(item?.thumbnail),
+    isTopStory: Boolean(item?.is_top_story),
+    url: item?.id ? `https://www.saveticker.com/news/detail/${item.id}` : SOURCES.savetickerNews,
+  };
+}
+
+function newsListFromPayload(payload) {
+  return (payload?.news_list || payload?.data || payload?.items || [])
+    .map(normalizeNewsItem)
+    .filter((item) => item.title);
+}
+
+async function getSavetickerNews() {
+  const [topPayload, listPayload] = await Promise.all([
+    tryFetchJson(`${SOURCES.savetickerApi}/news/top-stories`),
+    tryFetchJson(`${SOURCES.savetickerApi}/news/list?page=1&page_size=8&sort=created_at_desc`),
+  ]);
+
+  return {
+    source: SOURCES.savetickerNews,
+    sourceLabel: "SaveTicker",
+    fetchedAt: new Date().toISOString(),
+    topStories: newsListFromPayload(topPayload).slice(0, 3),
+    items: newsListFromPayload(listPayload).slice(0, 6),
+  };
+}
+
+async function getCachedSavetickerNews() {
+  const now = Date.now();
+  if (newsCache.payload && newsCache.expiresAt > now) {
+    return {
+      ...newsCache.payload,
+      cache: {
+        status: "hit",
+        ttlMs: newsCache.expiresAt - now,
+      },
+    };
+  }
+
+  try {
+    const payload = await getSavetickerNews();
+    newsCache = {
+      expiresAt: now + NEWS_CACHE_MS,
+      payload,
+    };
+    return {
+      ...payload,
+      cache: {
+        status: "refresh",
+        ttlMs: NEWS_CACHE_MS,
+      },
+    };
+  } catch (error) {
+    if (newsCache.payload) {
+      return {
+        ...newsCache.payload,
+        error: error.message,
+        cache: {
+          status: "stale",
+          ttlMs: 0,
+        },
+      };
+    }
+    throw error;
+  }
 }
 
 async function getNightFutures() {
@@ -325,8 +460,8 @@ async function getNightFutures() {
 }
 
 export async function getQuotes() {
-  const settled = await Promise.allSettled([getKospilab(), getNightFutures()]);
-  const [kospilab, nightFutures] = settled.map((entry) =>
+  const settled = await Promise.allSettled([getKospilab(), getNightFutures(), getCachedSavetickerNews()]);
+  const [kospilab, nightFutures, news] = settled.map((entry) =>
     entry.status === "fulfilled" ? entry.value : { error: entry.reason.message },
   );
 
@@ -338,9 +473,11 @@ export async function getQuotes() {
       { label: "eSignal 코스피 200 야간 선물", url: SOURCES.esignalNight },
       { label: "네이버 금융 지수 fallback", url: SOURCES.naverIndex },
       { label: "Yahoo Finance 지수 fallback", url: "https://finance.yahoo.com/" },
+      { label: "SaveTicker 뉴스", url: SOURCES.savetickerNews },
     ],
     kospilab,
     nightFutures,
+    news,
   };
 }
 
