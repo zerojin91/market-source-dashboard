@@ -9,6 +9,7 @@ const state = {
   nightSocketConnected: false,
   nightSocketHasData: false,
   history: loadHistory(),
+  chartRanges: {},
 };
 
 function fmtTime(value) {
@@ -158,6 +159,49 @@ function recordPayloadHistory(payload) {
   saveHistory();
 }
 
+function mergeHistoryPoints(key, points = []) {
+  if (!key || !Array.isArray(points) || !points.length) return;
+  const cutoff = Date.now() - HISTORY_DAYS * 24 * 60 * 60 * 1000;
+  const existing = Array.isArray(state.history[key]) ? state.history[key] : [];
+  const byTimestamp = new Map();
+
+  for (const point of existing) {
+    if (point.t >= cutoff && Number.isFinite(point.v)) byTimestamp.set(point.t, point.v);
+  }
+
+  for (const point of points) {
+    const t = Number(point.t);
+    const v = Number(point.v);
+    if (t >= cutoff && Number.isFinite(v)) byTimestamp.set(t, v);
+  }
+
+  state.history[key] = [...byTimestamp.entries()]
+    .map(([t, v]) => ({ t, v }))
+    .sort((a, b) => a.t - b.t)
+    .slice(-HISTORY_MAX_POINTS_PER_SYMBOL);
+}
+
+function mergeServerHistory(payload) {
+  const chartGroups = [
+    { items: payload.naverCharts?.items || {}, label: "네이버 1분 차트" },
+    { items: payload.yahooCharts?.items || {}, label: "Yahoo 1분 차트" },
+  ];
+
+  for (const group of chartGroups) {
+    for (const [key, item] of Object.entries(group.items)) {
+      mergeHistoryPoints(key, item.points);
+      const points = Array.isArray(item.points) ? item.points.filter((point) => Number.isFinite(point.t) && Number.isFinite(point.v)) : [];
+      if (points.length >= 2) {
+        state.chartRanges[key] = {
+          start: points[0].t,
+          end: points.at(-1).t,
+          label: group.label,
+        };
+      }
+    }
+  }
+}
+
 function numericChange(item) {
   const percent = Number(String(item.percent || "").replace(/[^0-9.+-]/g, ""));
   if (Number.isFinite(percent) && percent !== 0) return percent;
@@ -177,7 +221,10 @@ function todayRange() {
 function sparkline(item) {
   const key = quoteHistoryKey(item);
   const history = Array.isArray(state.history[key]) ? state.history[key] : [];
-  const { start, end } = todayRange();
+  const serverRange = state.chartRanges[key];
+  const fallbackRange = todayRange();
+  const start = serverRange?.start || fallbackRange.start;
+  const end = serverRange?.end || fallbackRange.end;
   const points = history
     .filter((point) => point.t >= start && point.t <= end && Number.isFinite(point.v))
     .sort((a, b) => a.t - b.t);
@@ -187,28 +234,29 @@ function sparkline(item) {
   const baseline = samples[0] ?? current ?? 0;
   const min = Math.min(...samples, baseline);
   const max = Math.max(...samples, baseline);
-  const scaleY = (value) => 8 + ((value - min) / Math.max(max - min, 1)) * 34;
+  const scaleY = (value) => 8 + (1 - ((value - min) / Math.max(max - min, 1))) * 34;
   const width = 116;
   const baseY = scaleY(samples[0] ?? 0).toFixed(1);
   const baselineY = scaleY(baseline).toFixed(1);
   const path = points.length >= 2
     ? points
       .map((point, index) => {
-        const x = ((point.t - start) / (end - start)) * width;
+        const x = ((point.t - start) / Math.max(end - start, 1)) * width;
         return `${index === 0 ? "M" : "L"}${x.toFixed(1)},${scaleY(point.v).toFixed(1)}`;
       })
       .join(" ")
     : `M0,${baseY} L${width},${baseY}`;
   const areaPath = points.length >= 2
-    ? `${path} L${(((points.at(-1).t - start) / (end - start)) * width).toFixed(1)},50 L${(((points[0].t - start) / (end - start)) * width).toFixed(1)},50 Z`
+    ? `${path} L${(((points.at(-1).t - start) / Math.max(end - start, 1)) * width).toFixed(1)},50 L${(((points[0].t - start) / Math.max(end - start, 1)) * width).toFixed(1)},50 Z`
     : `M0,${baseY} L${width},${baseY} L${width},50 L0,50 Z`;
-  const hourTicks = [0, 6, 12, 18, 24].map((hour) => {
-    const x = (hour / 24) * width;
+  const hourTicks = [0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+    const x = ratio * width;
     return `<line class="sparkline-grid" x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="4" y2="48"></line>`;
   }).join("");
+  const rangeLabel = serverRange?.label || "오늘 00~23시";
   const label = points.length >= 2
-    ? `오늘 00~23시 · ${points.length.toLocaleString("ko-KR")}개 실제 기록`
-    : "오늘 00~23시 · 실제 데이터 수집 중";
+    ? `${rangeLabel} · ${points.length.toLocaleString("ko-KR")}개 실제 기록`
+    : `${rangeLabel} · 실제 데이터 수집 중`;
 
   return `
     <svg class="sparkline" viewBox="0 0 116 50" role="img" aria-label="${item.name} 오늘 24시간 추세 그래프" preserveAspectRatio="none">
@@ -400,9 +448,11 @@ function renderHeader(payload) {
 function render(payload) {
   state.lastPayload = payload;
   $("#lastUpdated").textContent = fmtTime(payload.refreshedAt);
-  $("#liveDot").className = "live-dot active";
+  const liveDot = $("#liveDot");
+  if (liveDot) liveDot.className = "live-dot active";
   renderHeader(payload);
   renderNews(payload.news);
+  mergeServerHistory(payload);
   recordPayloadHistory(payload);
 
   const items = payload.kospilab?.items || [];
@@ -434,7 +484,8 @@ async function loadQuotes() {
     if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
     render(await response.json());
   } catch (error) {
-    $("#liveDot").className = "live-dot error";
+    const liveDot = $("#liveDot");
+    if (liveDot) liveDot.className = "live-dot error";
     $("#lastUpdated").textContent = "오류";
     renderError($("#nightGrid"), `데이터 갱신 실패: ${error.message}`);
   }

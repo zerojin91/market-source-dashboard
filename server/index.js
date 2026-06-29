@@ -8,7 +8,17 @@ const root = normalize(join(__dirname, ".."));
 const publicDir = join(root, "public");
 const port = Number(process.env.PORT || 3000);
 const NEWS_CACHE_MS = 5 * 60 * 1000;
+const YAHOO_CHART_CACHE_MS = 60 * 1000;
+const NAVER_CHART_CACHE_MS = 60 * 1000;
 let newsCache = {
+  expiresAt: 0,
+  payload: null,
+};
+let yahooChartCache = {
+  expiresAt: 0,
+  payload: null,
+};
+let naverChartCache = {
   expiresAt: 0,
   payload: null,
 };
@@ -17,11 +27,24 @@ const SOURCES = {
   kospilab: "https://kospilab.com/",
   esignalNight: "https://esignal.co.kr/kospi200-futures-night/",
   naverIndex: "https://polling.finance.naver.com/api/realtime/domestic/index/KOSPI,KOSDAQ",
+  naverChart: "https://api.stock.naver.com/chart/domestic/index",
   yahooIxic: "https://query1.finance.yahoo.com/v8/finance/chart/%5EIXIC",
   yahooGspc: "https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC",
+  yahooChart: "https://query1.finance.yahoo.com/v8/finance/chart",
   savetickerNews: "https://www.saveticker.com/news",
   savetickerApi: "https://api.saveticker.com/api",
 };
+
+const YAHOO_CHART_TARGETS = [
+  { id: "nasdaq", name: "NASDAQ", symbol: "^IXIC" },
+  { id: "s-p-500", name: "S&P 500", symbol: "^GSPC" },
+  { id: "nasdaq-100-futures", name: "NASDAQ 100 Futures", symbol: "NQ=F" },
+];
+
+const NAVER_CHART_TARGETS = [
+  { id: "kospi", name: "KOSPI", symbol: "KOSPI" },
+  { id: "kosdaq", name: "KOSDAQ", symbol: "KOSDAQ" },
+];
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -267,6 +290,12 @@ async function getKospilab() {
     }
   }
 
+  for (const item of indices) {
+    if (item.name === "KOSPI" || item.name === "KOSDAQ") {
+      item.sourceLabel = "네이버 금융";
+    }
+  }
+
   return {
     source: SOURCES.kospilab,
     fetchedAt: new Date().toISOString(),
@@ -287,6 +316,231 @@ function latestPointFromCache(cache) {
 async function tryFetchJson(url) {
   const text = await fetchText(url, 5000);
   return JSON.parse(text);
+}
+
+function yahooChartUrl(symbol) {
+  const params = new URLSearchParams({
+    range: "1d",
+    interval: "1m",
+    includePrePost: "true",
+  });
+  return `${SOURCES.yahooChart}/${encodeURIComponent(symbol)}?${params}`;
+}
+
+function normalizeYahooChart(payload, target) {
+  const result = payload?.chart?.result?.[0];
+  const timestamps = result?.timestamp || [];
+  const closes = result?.indicators?.quote?.[0]?.close || [];
+  const points = timestamps
+    .map((timestamp, index) => ({
+      t: timestamp * 1000,
+      v: closes[index],
+    }))
+    .filter((point) => Number.isFinite(point.t) && Number.isFinite(point.v));
+
+  return {
+    id: target.id,
+    name: target.name,
+    symbol: target.symbol,
+    source: `https://finance.yahoo.com/quote/${encodeURIComponent(target.symbol)}/`,
+    fetchedAt: new Date().toISOString(),
+    previousClose: result?.meta?.chartPreviousClose || result?.meta?.previousClose || null,
+    points,
+  };
+}
+
+async function getYahooCharts() {
+  const settled = await Promise.allSettled(
+    YAHOO_CHART_TARGETS.map(async (target) => {
+      const payload = await tryFetchJson(yahooChartUrl(target.symbol));
+      return normalizeYahooChart(payload, target);
+    }),
+  );
+
+  const items = {};
+  const notes = [];
+  settled.forEach((entry, index) => {
+    const target = YAHOO_CHART_TARGETS[index];
+    if (entry.status === "fulfilled") {
+      items[target.id] = entry.value;
+      return;
+    }
+    notes.push(`${target.symbol}: Yahoo chart fetch failed (${entry.reason.message})`);
+  });
+
+  return {
+    source: "https://finance.yahoo.com/",
+    sourceLabel: "Yahoo Finance",
+    fetchedAt: new Date().toISOString(),
+    interval: "1m",
+    range: "1d",
+    items,
+    notes,
+  };
+}
+
+async function getCachedYahooCharts() {
+  const now = Date.now();
+  if (yahooChartCache.payload && yahooChartCache.expiresAt > now) {
+    return {
+      ...yahooChartCache.payload,
+      cache: {
+        status: "hit",
+        ttlMs: yahooChartCache.expiresAt - now,
+      },
+    };
+  }
+
+  try {
+    const payload = await getYahooCharts();
+    yahooChartCache = {
+      expiresAt: now + YAHOO_CHART_CACHE_MS,
+      payload,
+    };
+    return {
+      ...payload,
+      cache: {
+        status: "refresh",
+        ttlMs: YAHOO_CHART_CACHE_MS,
+      },
+    };
+  } catch (error) {
+    if (yahooChartCache.payload) {
+      return {
+        ...yahooChartCache.payload,
+        error: error.message,
+        cache: {
+          status: "stale",
+          ttlMs: 0,
+        },
+      };
+    }
+    throw error;
+  }
+}
+
+function chartDateTime(daysAgo = 0) {
+  const date = new Date();
+  date.setDate(date.getDate() - daysAgo);
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+    String(date.getHours()).padStart(2, "0"),
+    String(date.getMinutes()).padStart(2, "0"),
+    String(date.getSeconds()).padStart(2, "0"),
+  ].join("");
+}
+
+function naverChartUrl(symbol) {
+  const params = new URLSearchParams({
+    startDateTime: chartDateTime(7),
+    endDateTime: chartDateTime(0),
+  });
+  return `${SOURCES.naverChart}/${symbol}/minute?${params}`;
+}
+
+function timestampFromNaverLocalDateTime(value) {
+  const text = String(value || "");
+  if (text.length < 14) return null;
+  const year = Number(text.slice(0, 4));
+  const month = Number(text.slice(4, 6)) - 1;
+  const day = Number(text.slice(6, 8));
+  const hour = Number(text.slice(8, 10));
+  const minute = Number(text.slice(10, 12));
+  const second = Number(text.slice(12, 14));
+  return Date.UTC(year, month, day, hour - 9, minute, second);
+}
+
+function normalizeNaverChart(payload, target) {
+  const rows = Array.isArray(payload) ? payload : [];
+  const latestDate = rows.at(-1)?.localDateTime?.slice(0, 8);
+  const points = rows
+    .filter((row) => !latestDate || row.localDateTime?.startsWith(latestDate))
+    .map((row) => ({
+      t: timestampFromNaverLocalDateTime(row.localDateTime),
+      v: row.currentPrice,
+    }))
+    .filter((point) => Number.isFinite(point.t) && Number.isFinite(point.v));
+
+  return {
+    id: target.id,
+    name: target.name,
+    symbol: target.symbol,
+    source: `https://finance.naver.com/sise/sise_index.naver?code=${target.symbol}`,
+    fetchedAt: new Date().toISOString(),
+    points,
+  };
+}
+
+async function getNaverCharts() {
+  const settled = await Promise.allSettled(
+    NAVER_CHART_TARGETS.map(async (target) => {
+      const payload = await tryFetchJson(naverChartUrl(target.symbol));
+      return normalizeNaverChart(payload, target);
+    }),
+  );
+
+  const items = {};
+  const notes = [];
+  settled.forEach((entry, index) => {
+    const target = NAVER_CHART_TARGETS[index];
+    if (entry.status === "fulfilled") {
+      items[target.id] = entry.value;
+      return;
+    }
+    notes.push(`${target.symbol}: Naver chart fetch failed (${entry.reason.message})`);
+  });
+
+  return {
+    source: "https://finance.naver.com/",
+    sourceLabel: "네이버 금융",
+    fetchedAt: new Date().toISOString(),
+    interval: "1m",
+    range: "recent",
+    items,
+    notes,
+  };
+}
+
+async function getCachedNaverCharts() {
+  const now = Date.now();
+  if (naverChartCache.payload && naverChartCache.expiresAt > now) {
+    return {
+      ...naverChartCache.payload,
+      cache: {
+        status: "hit",
+        ttlMs: naverChartCache.expiresAt - now,
+      },
+    };
+  }
+
+  try {
+    const payload = await getNaverCharts();
+    naverChartCache = {
+      expiresAt: now + NAVER_CHART_CACHE_MS,
+      payload,
+    };
+    return {
+      ...payload,
+      cache: {
+        status: "refresh",
+        ttlMs: NAVER_CHART_CACHE_MS,
+      },
+    };
+  } catch (error) {
+    if (naverChartCache.payload) {
+      return {
+        ...naverChartCache.payload,
+        error: error.message,
+        cache: {
+          status: "stale",
+          ttlMs: 0,
+        },
+      };
+    }
+    throw error;
+  }
 }
 
 function pickTranslation(item, key) {
@@ -460,8 +714,14 @@ async function getNightFutures() {
 }
 
 export async function getQuotes() {
-  const settled = await Promise.allSettled([getKospilab(), getNightFutures(), getCachedSavetickerNews()]);
-  const [kospilab, nightFutures, news] = settled.map((entry) =>
+  const settled = await Promise.allSettled([
+    getKospilab(),
+    getNightFutures(),
+    getCachedSavetickerNews(),
+    getCachedYahooCharts(),
+    getCachedNaverCharts(),
+  ]);
+  const [kospilab, nightFutures, news, yahooCharts, naverCharts] = settled.map((entry) =>
     entry.status === "fulfilled" ? entry.value : { error: entry.reason.message },
   );
 
@@ -472,12 +732,16 @@ export async function getQuotes() {
       { label: "KOSPI LAB", url: SOURCES.kospilab },
       { label: "eSignal 코스피 200 야간 선물", url: SOURCES.esignalNight },
       { label: "네이버 금융 지수 fallback", url: SOURCES.naverIndex },
+      { label: "네이버 금융 1분 차트", url: "https://finance.naver.com/" },
       { label: "Yahoo Finance 지수 fallback", url: "https://finance.yahoo.com/" },
+      { label: "Yahoo Finance 1분 차트", url: "https://finance.yahoo.com/" },
       { label: "SaveTicker 뉴스", url: SOURCES.savetickerNews },
     ],
     kospilab,
     nightFutures,
     news,
+    yahooCharts,
+    naverCharts,
   };
 }
 

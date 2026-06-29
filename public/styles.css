@@ -90,8 +90,6 @@ a {
 
 .market-pill,
 .status-panel,
-.source-strip a,
-.source-chip,
 .badge {
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -128,12 +126,6 @@ a {
   font-variant-numeric: tabular-nums;
 }
 
-.icon-pill {
-  justify-content: center;
-  width: 44px;
-  padding: 0;
-}
-
 .status-panel {
   display: none;
 }
@@ -164,17 +156,6 @@ a {
   font-size: 12px;
 }
 
-.source-strip {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin: 2px 0 18px;
-}
-
-.source-strip a,
-.source-chip,
 .badge {
   color: var(--text);
   font-size: 13px;
@@ -183,11 +164,6 @@ a {
   text-decoration: none;
 }
 
-.source-strip a {
-  padding: 12px 18px;
-}
-
-.source-chip,
 .badge {
   padding: 10px 14px;
   white-space: nowrap;
@@ -358,15 +334,6 @@ a {
   align-items: flex-end;
   gap: 16px;
   margin-bottom: 22px;
-}
-
-.eyebrow {
-  margin: 0 0 8px;
-  color: #6d5dfc;
-  font-size: 13px;
-  font-weight: 820;
-  letter-spacing: 0;
-  text-transform: uppercase;
 }
 
 h2,
@@ -607,14 +574,6 @@ h2 {
   .fx-pill,
   .time-pill {
     flex: 1 1 140px;
-  }
-
-  .icon-pill {
-    flex: 0 0 40px;
-  }
-
-  .source-strip {
-    margin-bottom: 16px;
   }
 
   .news-panel {
