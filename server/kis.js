@@ -6,6 +6,10 @@ const MASTER_CACHE_MS = 6 * 60 * 60 * 1000;
 const WATCHLIST_CACHE_MS = 5 * 1000;
 const CHART_CACHE_MS = 5 * 60 * 1000;
 const KIS_REQUEST_GAP_MS = 1400;
+const KIS_CHART_REQUEST_GAP_MS = 120;
+const INTRADAY_CHART_START_TIME = "090000";
+const INTRADAY_CHART_END_TIME = "200000";
+const INTRADAY_CHART_MAX_PAGES = 24;
 
 const MASTER_URLS = {
   KOSPI: "https://new.real.download.dws.co.kr/common/master/kospi_code.mst.zip",
@@ -168,7 +172,7 @@ export async function issueKisToken({ forceRefresh = false } = {}) {
   };
 }
 
-async function kisRequest(path, { trId, params = {} } = {}) {
+async function kisRequest(path, { trId, params = {}, paceMs = KIS_REQUEST_GAP_MS } = {}) {
   const { apiBase, appKey, appSecret } = kisConfig();
   const token = await issueKisToken();
   const url = new URL(`${apiBase}${path}`);
@@ -179,7 +183,7 @@ async function kisRequest(path, { trId, params = {} } = {}) {
   }
 
   const elapsed = Date.now() - lastKisRequestAt;
-  if (elapsed < KIS_REQUEST_GAP_MS) await wait(KIS_REQUEST_GAP_MS - elapsed);
+  if (elapsed < paceMs) await wait(paceMs - elapsed);
   lastKisRequestAt = Date.now();
 
   const response = await fetch(url, {
@@ -351,9 +355,22 @@ function minuteChartEndTime() {
   const second = Number(parts.second);
   const current = hour * 10000 + minute * 100 + second;
   const isWeekday = !["Sat", "Sun"].includes(parts.weekday);
-  if (!isWeekday || current > 153000) return "153000";
-  if (current < 90000) return "090000";
+  if (!isWeekday || current > Number(INTRADAY_CHART_END_TIME)) return INTRADAY_CHART_END_TIME;
+  if (current < Number(INTRADAY_CHART_START_TIME)) return INTRADAY_CHART_START_TIME;
   return `${String(hour).padStart(2, "0")}${String(minute).padStart(2, "0")}${String(second).padStart(2, "0")}`;
+}
+
+function oneSecondBeforeTime(time) {
+  const text = String(time || "").padStart(6, "0");
+  const hour = Number(text.slice(0, 2));
+  const minute = Number(text.slice(2, 4));
+  const second = Number(text.slice(4, 6));
+  const total = Math.max(hour * 3600 + minute * 60 + second - 1, 0);
+  return [
+    String(Math.floor(total / 3600)).padStart(2, "0"),
+    String(Math.floor((total % 3600) / 60)).padStart(2, "0"),
+    String(total % 60).padStart(2, "0"),
+  ].join("");
 }
 
 function normalizeDailyChartPoints(output = []) {
@@ -400,6 +417,25 @@ function normalizeMinuteChartPoints(output = []) {
     .sort((a, b) => a.t - b.t);
 }
 
+function minutePointDateKey(point) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(point.t));
+}
+
+function minutePointTimeKey(point) {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Seoul",
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(new Date(point.t)).replace(/:/g, "");
+}
+
 async function getDailyChart(target) {
   const cacheKey = `daily:${target.symbol}`;
   const cached = chartCache.get(cacheKey);
@@ -432,18 +468,44 @@ async function getIntradayChart(target) {
   const now = Date.now();
   if (cached && cached.expiresAt > now) return cached.points;
 
-  const payload = await kisRequest("/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice", {
-    trId: "FHKST03010200",
-    params: {
-      FID_ETC_CLS_CODE: "00",
-      FID_COND_MRKT_DIV_CODE: "J",
-      FID_INPUT_ISCD: target.symbol,
-      FID_INPUT_HOUR_1: minuteChartEndTime(),
-      FID_PW_DATA_INCU_YN: "N",
-    },
-  });
+  const pointsByKey = new Map();
+  let tradingDay = null;
+  let endTime = minuteChartEndTime();
 
-  const points = normalizeMinuteChartPoints(payload.output2);
+  for (let page = 0; page < INTRADAY_CHART_MAX_PAGES; page += 1) {
+    const payload = await kisRequest("/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice", {
+      trId: "FHKST03010200",
+      paceMs: KIS_CHART_REQUEST_GAP_MS,
+      params: {
+        FID_ETC_CLS_CODE: "00",
+        FID_COND_MRKT_DIV_CODE: "J",
+        FID_INPUT_ISCD: target.symbol,
+        FID_INPUT_HOUR_1: endTime,
+        FID_PW_DATA_INCU_YN: "N",
+      },
+    });
+
+    const pagePoints = normalizeMinuteChartPoints(payload.output2);
+    if (!pagePoints.length) break;
+
+    const latestPoint = pagePoints.at(-1);
+    tradingDay ||= minutePointDateKey(latestPoint);
+    const sameDayPoints = pagePoints.filter((point) => minutePointDateKey(point) === tradingDay);
+    if (!sameDayPoints.length) break;
+
+    for (const point of sameDayPoints) {
+      pointsByKey.set(`${point.t}`, point);
+    }
+
+    const earliestTime = minutePointTimeKey(sameDayPoints[0]);
+    if (earliestTime <= INTRADAY_CHART_START_TIME) break;
+
+    const nextEndTime = oneSecondBeforeTime(earliestTime);
+    if (nextEndTime >= endTime) break;
+    endTime = nextEndTime;
+  }
+
+  const points = [...pointsByKey.values()].sort((a, b) => a.t - b.t);
   chartCache.set(cacheKey, {
     expiresAt: now + CHART_CACHE_MS,
     points,
@@ -792,18 +854,29 @@ export async function getKisWatchlist() {
     });
   }
 
-  for (const target of validTargets) {
-    try {
-      chartById.set(target.id, await getWatchlistChart(target));
-    } catch (error) {
-      errors.push({
-        id: target.id,
-        name: target.name,
-        symbol: target.symbol,
-        step: "chart",
-        message: error.message,
-        details: error.details || null,
-      });
+  for (let index = 0; index < validTargets.length; index += 2) {
+    const group = validTargets.slice(index, index + 2);
+    const chartResults = await Promise.all(group.map(async (target) => {
+      try {
+        return { target, points: await getWatchlistChart(target) };
+      } catch (error) {
+        return { target, error };
+      }
+    }));
+
+    for (const result of chartResults) {
+      if (result.error) {
+        errors.push({
+          id: result.target.id,
+          name: result.target.name,
+          symbol: result.target.symbol,
+          step: "chart",
+          message: result.error.message,
+          details: result.error.details || null,
+        });
+        continue;
+      }
+      chartById.set(result.target.id, result.points);
     }
   }
 
