@@ -10,7 +10,89 @@ const state = {
   nightSocketHasData: false,
   history: loadHistory(),
   chartRanges: {},
+  boardFilter: "all",
 };
+
+const BOARD_FALLBACK_ROWS = [
+  {
+    id: "sk",
+    name: "SK",
+    category: "domestic",
+    logo: "SK",
+    logoTone: "red",
+    value: "662,000원",
+    percent: "+8.52%",
+    change: "+52,000원",
+    volume: "330,645주",
+    volumeCompare: "94.04%",
+    trend: [18, 28, 46, 64, 52, 69, 63, 72, 68, 58, 50, 54, 48, 61],
+  },
+  {
+    id: "ecopro",
+    name: "에코프로",
+    category: "domestic",
+    logo: "Eco",
+    logoTone: "blue",
+    value: "85,700원",
+    percent: "+7.93%",
+    change: "+6,300원",
+    volume: "2,169,019주",
+    volumeCompare: "86.40%",
+    trend: [12, 45, 67, 61, 70, 58, 62, 55, 64, 61, 66, 63, 65, 69],
+  },
+  {
+    id: "tiger-200it-leverage",
+    name: "TIGER 200IT레버리지",
+    category: "domestic",
+    logo: "2x",
+    logoTone: "orange",
+    value: "535,045원",
+    percent: "+7.76%",
+    change: "+38,555원",
+    volume: "114,690주",
+    volumeCompare: "87.18%",
+    trend: [56, 34, 27, 52, 68, 43, 56, 62, 82, 73, 88, 78, 66, 55],
+  },
+  {
+    id: "kodex-semiconductor-leverage",
+    name: "KODEX 반도체레버리지",
+    category: "domestic",
+    logo: "2x",
+    logoTone: "indigo",
+    value: "120,100원",
+    percent: "+6.46%",
+    change: "+7,295원",
+    volume: "947,181주",
+    volumeCompare: "83.96%",
+    trend: [60, 30, 40, 65, 82, 66, 74, 81, 91, 96, 84, 73, 46, 37],
+  },
+  {
+    id: "sk-hynix",
+    name: "SK하이닉스",
+    category: "domestic",
+    logo: "SK",
+    logoTone: "red",
+    value: "2,201,000원",
+    percent: "+0.68%",
+    change: "+15,000원",
+    volume: "8,177,226주",
+    volumeCompare: "76.16%",
+    trend: [86, 88, 22, 31, 46, 40, 62, 53, 32, 20, 26, 24, 29, 27],
+  },
+  {
+    id: "samsung-electronics",
+    name: "삼성전자",
+    category: "domestic",
+    logo: "SAMSUNG",
+    logoTone: "navy",
+    value: "286,500원",
+    percent: "+3.05%",
+    change: "+8,500원",
+    volume: "3,677만주",
+    volumeCompare: "68.39%",
+    trend: [32, 58, 46, 70, 59, 82, 76, 68, 40, 24, 29, 33, 36, 43],
+  },
+];
 
 function fmtTime(value) {
   if (!value) return "대기 중";
@@ -96,6 +178,21 @@ function directionClass(...values) {
 
 function clean(value, fallback = "-") {
   return value === null || value === undefined || value === "" ? fallback : value;
+}
+
+function stripWon(value) {
+  return String(clean(value, "")).replace(/^₩\s*/, "").replace(/\s*원$/, "");
+}
+
+function formatWon(value) {
+  const text = stripWon(value);
+  return text ? `${text}원` : "-";
+}
+
+function formatSignedWon(value) {
+  const text = stripWon(value);
+  if (!text || text === "-") return "-";
+  return `${text}원`;
 }
 
 function escapeHtml(value) {
@@ -357,6 +454,116 @@ function renderNews(news) {
   renderNewsList($("#latestNewsList"), news?.items, "뉴스가 아직 없습니다.");
 }
 
+function normalizeBoardRow(item) {
+  const fallback = BOARD_FALLBACK_ROWS.find((row) => row.id === item.id || row.name === item.name) || {};
+  return {
+    ...fallback,
+    id: item.id || fallback.id || item.name,
+    name: item.name || fallback.name,
+    category: fallback.category || "domestic",
+    logo: fallback.logo || item.name?.slice(0, 2) || "KR",
+    logoTone: fallback.logoTone || "slate",
+    value: item.value ? formatWon(item.value) : fallback.value,
+    percent: item.percent || fallback.percent,
+    change: item.change ? formatSignedWon(item.change) : fallback.change,
+    volume: item.volume || fallback.volume,
+    volumeCompare: fallback.volumeCompare || "-",
+    trend: fallback.trend,
+  };
+}
+
+function boardRows(payload) {
+  const stocks = (payload.kospilab?.items || []).filter((item) => item.section === "국내 주식");
+  const rowsById = new Map(BOARD_FALLBACK_ROWS.map((row) => [row.id, row]));
+
+  for (const item of stocks) {
+    rowsById.set(item.id, normalizeBoardRow(item));
+  }
+
+  return [...rowsById.values()].sort((a, b) => {
+    const aPercent = numericValue(a.percent) ?? -Infinity;
+    const bPercent = numericValue(b.percent) ?? -Infinity;
+    return bPercent - aPercent;
+  });
+}
+
+function rankingSparkline(row) {
+  const key = row.id;
+  const history = Array.isArray(state.history[key]) ? state.history[key] : [];
+  const points = history
+    .filter((point) => Number.isFinite(point.t) && Number.isFinite(point.v))
+    .slice(-48);
+  const values = points.length ? points.map((point) => point.v) : row.trend || [50, 50];
+  const width = 150;
+  const height = 58;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const scaleX = (index) => (index / Math.max(values.length - 1, 1)) * width;
+  const scaleY = (value) => 7 + (1 - ((value - min) / Math.max(max - min, 1))) * 38;
+  const path = values
+    .map((value, index) => `${index === 0 ? "M" : "L"}${scaleX(index).toFixed(1)},${scaleY(value).toFixed(1)}`)
+    .join(" ");
+  const areaPath = `${path} L${width},${height - 5} L0,${height - 5} Z`;
+  const tone = directionClass(row.change, row.percent) || "up";
+
+  return `
+    <svg class="ranking-sparkline ${tone}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-label="${escapeHtml(row.name)} 차트">
+      <path class="ranking-sparkline-area" d="${areaPath}"></path>
+      <path class="ranking-sparkline-line" d="${path}"></path>
+      <line class="ranking-sparkline-base" x1="0" x2="${width}" y1="${height - 6}" y2="${height - 6}"></line>
+    </svg>
+  `;
+}
+
+function rankingRow(row) {
+  const tone = directionClass(row.change, row.percent);
+  return `
+    <tr>
+      <td>
+        <div class="stock-identity">
+          <span class="stock-logo ${escapeHtml(row.logoTone)}">${escapeHtml(row.logo)}</span>
+          <strong>${escapeHtml(row.name)}</strong>
+        </div>
+      </td>
+      <td>${rankingSparkline(row)}</td>
+      <td class="numeric price-cell">${escapeHtml(clean(row.value))}</td>
+      <td class="numeric move-cell ${tone}">${escapeHtml(clean(row.percent))}</td>
+      <td class="numeric move-cell ${tone}">${escapeHtml(clean(row.change))}</td>
+      <td class="numeric">${escapeHtml(clean(row.volume))}</td>
+      <td class="numeric">${escapeHtml(clean(row.volumeCompare))}</td>
+    </tr>
+  `;
+}
+
+function renderMarketBoard(payload) {
+  const target = $("#rankingTableBody");
+  if (!target) return;
+
+  const rows = boardRows(payload).filter((row) => state.boardFilter === "all" || row.category === state.boardFilter);
+  if (!rows.length) {
+    target.innerHTML = `
+      <tr>
+        <td class="board-empty" colspan="7">아직 표시할 데이터가 없습니다.</td>
+      </tr>
+    `;
+    return;
+  }
+
+  target.innerHTML = rows.map(rankingRow).join("");
+}
+
+function setupBoardTabs() {
+  document.querySelectorAll(".board-tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      state.boardFilter = tab.dataset.boardFilter || "all";
+      document.querySelectorAll(".board-tab").forEach((button) => {
+        button.classList.toggle("active", button === tab);
+      });
+      if (state.lastPayload) renderMarketBoard(state.lastPayload);
+    });
+  });
+}
+
 function setupNewsTabs() {
   document.querySelectorAll(".news-tab").forEach((tab) => {
     tab.addEventListener("click", () => {
@@ -454,6 +661,7 @@ function render(payload) {
   renderNews(payload.news);
   mergeServerHistory(payload);
   recordPayloadHistory(payload);
+  renderMarketBoard(payload);
 
   const items = payload.kospilab?.items || [];
   const indices = items.filter((item) => item.section === "지수");
@@ -560,6 +768,7 @@ function connectNightSocket() {
   }
 }
 
+setupBoardTabs();
 setupNewsTabs();
 loadQuotes();
 setInterval(loadQuotes, POLL_MS);

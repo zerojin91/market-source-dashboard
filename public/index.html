@@ -60,6 +60,44 @@
         <div id="latestNewsList" class="news-list" data-news-panel="latest"></div>
       </section>
 
+      <section class="section-block market-board-section" aria-labelledby="marketBoardTitle">
+        <div class="section-heading board-heading">
+          <div>
+            <p class="eyebrow">Stocks Info</p>
+            <h2 id="marketBoardTitle">종목 랭킹</h2>
+          </div>
+          <span class="source-chip">KOSPI/KOSDAQ 마스터 + 시세 데이터</span>
+        </div>
+        <div class="market-board">
+          <div class="board-toolbar">
+            <span class="board-mode">기본</span>
+            <div class="board-tabs" role="tablist" aria-label="종목 랭킹 필터">
+              <button class="board-tab active" type="button" data-board-filter="all">전체</button>
+              <button class="board-tab" type="button" data-board-filter="domestic">국내주식</button>
+              <button class="board-tab" type="button" data-board-filter="overseas">해외주식</button>
+              <button class="board-tab" type="button" data-board-filter="bond">채권</button>
+              <button class="board-tab" type="button" data-board-filter="option">옵션</button>
+            </div>
+          </div>
+          <div class="board-scroll">
+            <table class="ranking-table">
+              <thead>
+                <tr>
+                  <th>종목명</th>
+                  <th>차트</th>
+                  <th class="numeric">현재가</th>
+                  <th class="numeric">등락률</th>
+                  <th class="numeric">등락액</th>
+                  <th class="numeric">1일 거래량</th>
+                  <th class="numeric">거래량(어제보다)</th>
+                </tr>
+              </thead>
+              <tbody id="rankingTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
       <section class="section-block" aria-labelledby="indicesTitle">
         <div class="section-heading">
           <div>
