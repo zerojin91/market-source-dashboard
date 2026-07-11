@@ -660,6 +660,7 @@ export async function getKisWatchlist() {
       const quote = await getWatchlistPrice(target);
       let chartPoints = [];
       try {
+        await wait(500);
         chartPoints = await getDailyChart(target);
       } catch (error) {
         errors.push({
@@ -708,7 +709,7 @@ export async function getKisWatchlist() {
       });
     }
 
-    await wait(180);
+    await wait(500);
   }
 
   const payload = {

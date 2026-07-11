@@ -1,4 +1,5 @@
 const POLL_MS = 10000;
+const WATCHLIST_POLL_MS = 30000;
 const HISTORY_KEY = "qunatlab.quoteHistory.v1";
 const HISTORY_DAYS = 7;
 const HISTORY_MAX_POINTS_PER_SYMBOL = Math.ceil((HISTORY_DAYS * 24 * 60 * 60 * 1000) / POLL_MS);
@@ -170,8 +171,13 @@ function recordPayloadHistory(payload) {
   const timestamp = Date.now();
   const items = payload.kospilab?.items || [];
   for (const item of items) recordQuoteHistory(item, timestamp);
-  for (const item of payload.watchlist?.rows || []) recordQuoteHistory(item, timestamp);
   if (payload.nightFutures?.item?.value) recordQuoteHistory(payload.nightFutures.item, timestamp);
+  saveHistory();
+}
+
+function recordWatchlistHistory(watchlist) {
+  const timestamp = Date.now();
+  for (const item of watchlist?.rows || []) recordQuoteHistory(item, timestamp);
   saveHistory();
 }
 
@@ -568,7 +574,6 @@ function render(payload) {
   renderNews(payload.news);
   mergeServerHistory(payload);
   recordPayloadHistory(payload);
-  renderMarketBoard(payload);
 
   const items = payload.kospilab?.items || [];
   const indices = items.filter((item) => item.section === "지수");
@@ -590,6 +595,25 @@ function render(payload) {
     $("#nightGrid").innerHTML = nightCard(payload.nightFutures.item, payload.nightFutures);
   } else if (!state.nightSocketHasData) {
     renderError($("#nightGrid"), "eSignal 야간선물 데이터를 읽지 못했습니다.");
+  }
+}
+
+async function loadWatchlist() {
+  try {
+    const response = await fetch(`/api/kis-watchlist?t=${Date.now()}`, { cache: "no-store" });
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    const watchlist = await response.json();
+    recordWatchlistHistory(watchlist);
+    renderMarketBoard({ watchlist });
+  } catch (error) {
+    const target = $("#rankingTableBody");
+    if (target) {
+      target.innerHTML = `
+        <tr>
+          <td class="board-empty" colspan="7">관심 종목 갱신 실패: ${escapeHtml(error.message)}</td>
+        </tr>
+      `;
+    }
   }
 }
 
@@ -677,7 +701,9 @@ function connectNightSocket() {
 
 setupNewsTabs();
 loadQuotes();
+loadWatchlist();
 setInterval(loadQuotes, POLL_MS);
+setInterval(loadWatchlist, WATCHLIST_POLL_MS);
 updateMarketClock();
 setInterval(updateMarketClock, 1000);
 connectNightSocket();

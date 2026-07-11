@@ -721,9 +721,8 @@ export async function getQuotes() {
     getCachedSavetickerNews(),
     getCachedYahooCharts(),
     getCachedNaverCharts(),
-    getKisWatchlist(),
   ]);
-  const [kospilab, nightFutures, news, yahooCharts, naverCharts, watchlist] = settled.map((entry) =>
+  const [kospilab, nightFutures, news, yahooCharts, naverCharts] = settled.map((entry) =>
     entry.status === "fulfilled" ? entry.value : { error: entry.reason.message },
   );
 
@@ -738,14 +737,12 @@ export async function getQuotes() {
       { label: "Yahoo Finance 지수 fallback", url: "https://finance.yahoo.com/" },
       { label: "Yahoo Finance 1분 차트", url: "https://finance.yahoo.com/" },
       { label: "SaveTicker 뉴스", url: SOURCES.savetickerNews },
-      { label: "한국투자증권 관심 종목", url: "https://github.com/koreainvestment/open-trading-api/tree/main/stocks_info" },
     ],
     kospilab,
     nightFutures,
     news,
     yahooCharts,
     naverCharts,
-    watchlist,
   };
 }
 
