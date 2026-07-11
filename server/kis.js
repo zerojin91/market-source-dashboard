@@ -1,5 +1,24 @@
+import { inflateRawSync } from "node:zlib";
+
 const KIS_DEFAULT_API_BASE = "https://openapi.koreainvestment.com:9443";
 const TOKEN_REFRESH_SKEW_MS = 5 * 60 * 1000;
+const MASTER_CACHE_MS = 6 * 60 * 60 * 1000;
+const WATCHLIST_CACHE_MS = 20 * 1000;
+const CHART_CACHE_MS = 60 * 1000;
+
+const MASTER_URLS = {
+  KOSPI: "https://new.real.download.dws.co.kr/common/master/kospi_code.mst.zip",
+  KOSDAQ: "https://new.real.download.dws.co.kr/common/master/kosdaq_code.mst.zip",
+};
+
+const WATCHLIST_TARGETS = [
+  { id: "sk", name: "SK", logo: "SK", logoTone: "red" },
+  { id: "ecopro", name: "에코프로", logo: "Eco", logoTone: "blue" },
+  { id: "tiger-200it-leverage", name: "TIGER 200IT레버리지", logo: "2x", logoTone: "orange" },
+  { id: "kodex-semiconductor-leverage", name: "KODEX 반도체레버리지", logo: "2x", logoTone: "indigo" },
+  { id: "sk-hynix", name: "SK하이닉스", logo: "SK", logoTone: "red" },
+  { id: "samsung-electronics", name: "삼성전자", logo: "SAMSUNG", logoTone: "navy" },
+];
 
 let tokenCache = {
   accessToken: null,
@@ -7,6 +26,18 @@ let tokenCache = {
   expiresAt: 0,
   expiresIn: null,
 };
+
+let masterCache = {
+  expiresAt: 0,
+  items: null,
+};
+
+let watchlistCache = {
+  expiresAt: 0,
+  payload: null,
+};
+
+let chartCache = new Map();
 
 const INDEX_TARGETS = [
   { id: "kospi", name: "KOSPI", code: "0001" },
@@ -223,6 +254,21 @@ function normalizeStockPrice(target, output = {}) {
   };
 }
 
+function normalizeWatchlistQuote(target, output = {}) {
+  const current = output.stck_prpr || output.last || output.nav || output.etf_prpr;
+  const change = output.prdy_vrss || output.bstp_nmix_prdy_vrss || output.nav_prdy_vrss;
+  const percent = output.prdy_ctrt || output.bstp_nmix_prdy_ctrt || output.nav_prdy_ctrt;
+  const volume = output.acml_vol || output.hts_avls || output.total_vol;
+
+  return {
+    value: formatNumber(current),
+    change: signedNumber(change),
+    percent: signedPercent(percent),
+    volume: formatNumber(volume),
+    raw: output,
+  };
+}
+
 function normalizeIndexPrice(target, output = {}) {
   const value = output.bstp_nmix_prpr || output.bstp_nmix || output.stck_prpr;
   const change = output.bstp_nmix_prdy_vrss || output.prdy_vrss;
@@ -259,6 +305,82 @@ async function getStockPrice(target) {
   return normalizeStockPrice(target, payload.output);
 }
 
+async function getEtfPrice(target) {
+  const payload = await kisRequest("/uapi/etfetn/v1/quotations/inquire-price", {
+    trId: "FHPST02400000",
+    params: {
+      FID_COND_MRKT_DIV_CODE: "J",
+      FID_INPUT_ISCD: target.symbol,
+    },
+  });
+  return normalizeWatchlistQuote(target, payload.output);
+}
+
+function chartDate(daysAgo = 0) {
+  const date = new Date();
+  date.setDate(date.getDate() - daysAgo);
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("");
+}
+
+function normalizeChartPoints(output = []) {
+  return (Array.isArray(output) ? output : [])
+    .map((row) => {
+      const date = row.stck_bsop_date || row.bsop_date || row.date;
+      const value = numberLike(row.stck_clpr || row.clpr || row.stck_prpr || row.nav);
+      if (!date || value === null) return null;
+      const year = Number(String(date).slice(0, 4));
+      const month = Number(String(date).slice(4, 6)) - 1;
+      const day = Number(String(date).slice(6, 8));
+      return {
+        t: Date.UTC(year, month, day, 6, 30, 0),
+        v: value,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.t - b.t);
+}
+
+async function getDailyChart(target) {
+  const cacheKey = target.symbol;
+  const cached = chartCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && cached.expiresAt > now) return cached.points;
+
+  const payload = await kisRequest("/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice", {
+    trId: "FHKST03010100",
+    params: {
+      FID_COND_MRKT_DIV_CODE: "J",
+      FID_INPUT_ISCD: target.symbol,
+      FID_INPUT_DATE_1: chartDate(30),
+      FID_INPUT_DATE_2: chartDate(0),
+      FID_PERIOD_DIV_CODE: "D",
+      FID_ORG_ADJ_PRC: "1",
+    },
+  });
+
+  const points = normalizeChartPoints(payload.output2);
+  chartCache.set(cacheKey, {
+    expiresAt: now + CHART_CACHE_MS,
+    points,
+  });
+  return points;
+}
+
+async function getWatchlistPrice(target) {
+  if (target.isEtp) return getEtfPrice(target);
+  return normalizeWatchlistQuote(target, (await kisRequest("/uapi/domestic-stock/v1/quotations/inquire-price", {
+    trId: "FHKST01010100",
+    params: {
+      FID_COND_MRKT_DIV_CODE: "J",
+      FID_INPUT_ISCD: target.symbol,
+    },
+  })).output);
+}
+
 async function getIndexPrice(target) {
   const payload = await kisRequest("/uapi/domestic-stock/v1/quotations/inquire-index-price", {
     trId: "FHPUP02100000",
@@ -268,6 +390,191 @@ async function getIndexPrice(target) {
     },
   });
   return normalizeIndexPrice(target, payload.output);
+}
+
+function extractFirstZipFile(buffer) {
+  if (buffer.readUInt32LE(0) !== 0x04034b50) {
+    throw new Error("KIS master zip did not start with a local file header");
+  }
+
+  const flags = buffer.readUInt16LE(6);
+  const method = buffer.readUInt16LE(8);
+  const compressedSize = buffer.readUInt32LE(18);
+  const fileNameLength = buffer.readUInt16LE(26);
+  const extraLength = buffer.readUInt16LE(28);
+  const dataStart = 30 + fileNameLength + extraLength;
+
+  if ((flags & 0x08) !== 0) {
+    throw new Error("KIS master zip uses a data descriptor that is not supported");
+  }
+
+  const compressed = buffer.subarray(dataStart, dataStart + compressedSize);
+  if (method === 0) return compressed;
+  if (method === 8) return inflateRawSync(compressed);
+  throw new Error(`Unsupported KIS master zip compression method: ${method}`);
+}
+
+function parseFixedWidth(text, widths, columns) {
+  const values = {};
+  let offset = 0;
+  columns.forEach((column, index) => {
+    const width = widths[index];
+    values[column] = text.slice(offset, offset + width).trim();
+    offset += width;
+  });
+  return values;
+}
+
+const KOSPI_WIDTHS = [
+  2, 1, 4, 4, 4,
+  1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1,
+  1, 9, 5, 5, 1,
+  1, 1, 2, 1, 1,
+  1, 2, 2, 2, 3,
+  1, 3, 12, 12, 8,
+  15, 21, 2, 7, 1,
+  1, 1, 1, 1, 9,
+  9, 9, 5, 9, 8,
+  9, 3, 1, 1, 1,
+];
+const KOSPI_COLUMNS = ["그룹코드", "시가총액규모", "지수업종대분류", "지수업종중분류", "지수업종소분류", "제조업", "저유동성", "지배구조지수종목", "KOSPI200섹터업종", "KOSPI100", "KOSPI50", "KRX", "ETP", "ELW발행", "KRX100", "KRX자동차", "KRX반도체", "KRX바이오", "KRX은행", "SPAC", "KRX에너지화학", "KRX철강", "단기과열", "KRX미디어통신", "KRX건설", "Non1", "KRX증권", "KRX선박", "KRX섹터_보험", "KRX섹터_운송", "SRI", "기준가", "매매수량단위", "시간외수량단위", "거래정지", "정리매매", "관리종목", "시장경고", "경고예고", "불성실공시", "우회상장", "락구분", "액면변경", "증자구분", "증거금비율", "신용가능", "신용기간", "전일거래량", "액면가", "상장일자", "상장주수", "자본금", "결산월", "공모가", "우선주", "공매도과열", "이상급등", "KRX300", "KOSPI", "매출액", "영업이익", "경상이익", "당기순이익", "ROE", "기준년월", "시가총액", "그룹사코드", "회사신용한도초과", "담보대출가능", "대주가능"];
+
+const KOSDAQ_WIDTHS = [
+  2, 1,
+  4, 4, 4, 1, 1,
+  1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1,
+  1, 1, 1, 1, 9,
+  5, 5, 1, 1, 1,
+  2, 1, 1, 1, 2,
+  2, 2, 3, 1, 3,
+  12, 12, 8, 15, 21,
+  2, 7, 1, 1, 1,
+  1, 9, 9, 9, 5,
+  9, 8, 9, 3, 1,
+  1, 1,
+];
+const KOSDAQ_COLUMNS = ["증권그룹구분코드", "시가총액규모", "지수업종대분류", "지수업종중분류", "지수업종소분류", "벤처기업", "저유동성", "KRX", "ETP", "KRX100", "KRX자동차", "KRX반도체", "KRX바이오", "KRX은행", "SPAC", "KRX에너지화학", "KRX철강", "단기과열", "KRX미디어통신", "KRX건설", "투자주의환기", "KRX증권", "KRX선박", "KRX섹터_보험", "KRX섹터_운송", "KOSDAQ150", "기준가", "매매수량단위", "시간외수량단위", "거래정지", "정리매매", "관리종목", "시장경고", "경고예고", "불성실공시", "우회상장", "락구분", "액면변경", "증자구분", "증거금비율", "신용가능", "신용기간", "전일거래량", "액면가", "상장일자", "상장주수", "자본금", "결산월", "공모가", "우선주", "공매도과열", "이상급등", "KRX300", "매출액", "영업이익", "경상이익", "당기순이익", "ROE", "기준년월", "시가총액", "그룹사코드", "회사신용한도초과", "담보대출가능", "대주가능"];
+
+async function downloadMaster(market) {
+  const response = await fetch(MASTER_URLS[market], {
+    headers: {
+      "user-agent": "MarketSourceDashboard/0.1",
+    },
+  });
+  if (!response.ok) throw new Error(`${market} master download failed: ${response.status}`);
+
+  const buffer = Buffer.from(await response.arrayBuffer());
+  const mst = extractFirstZipFile(buffer);
+  return new TextDecoder("euc-kr").decode(mst);
+}
+
+function parseMasterText(market, text) {
+  const isKospi = market === "KOSPI";
+  const widths = isKospi ? KOSPI_WIDTHS : KOSDAQ_WIDTHS;
+  const columns = isKospi ? KOSPI_COLUMNS : KOSDAQ_COLUMNS;
+  const tailLength = widths.reduce((total, width) => total + width, 0);
+
+  return text
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => {
+      const head = line.slice(0, line.length - tailLength);
+      const fields = parseFixedWidth(line.slice(-tailLength), widths, columns);
+      return {
+        market,
+        symbol: head.slice(0, 9).trim(),
+        standardCode: head.slice(9, 21).trim(),
+        name: head.slice(21).trim(),
+        basePrice: formatNumber(fields["기준가"]),
+        previousVolume: numberLike(fields["전일거래량"]),
+        previousVolumeLabel: formatNumber(fields["전일거래량"]),
+        listedAt: fields["상장일자"] || null,
+        marketCap: formatNumber(fields["시가총액"]),
+        roe: fields["ROE"] || null,
+        isEtp: fields["ETP"] === "Y",
+        status: {
+          halted: fields["거래정지"] === "Y",
+          watch: fields["관리종목"] === "Y",
+          warning: fields["시장경고"] || null,
+        },
+        rawMaster: fields,
+      };
+    });
+}
+
+async function getStockMaster() {
+  const now = Date.now();
+  if (masterCache.items && masterCache.expiresAt > now) return masterCache.items;
+
+  const markets = await Promise.all(
+    Object.keys(MASTER_URLS).map(async (market) => parseMasterText(market, await downloadMaster(market))),
+  );
+  const items = markets.flat();
+  masterCache = {
+    expiresAt: now + MASTER_CACHE_MS,
+    items,
+  };
+  return items;
+}
+
+function findMasterItem(masterItems, name) {
+  return masterItems.find((item) => item.name === name) || masterItems.find((item) => item.name.includes(name));
+}
+
+function formatVolumeCompare(currentVolume, previousVolume) {
+  const current = numberLike(currentVolume);
+  const previous = numberLike(previousVolume);
+  if (current === null || previous === null || previous <= 0) return null;
+  return `${((current / previous) * 100).toFixed(2)}%`;
+}
+
+function watchlistTargetFromMaster(target, masterItem) {
+  if (!masterItem) return null;
+  return {
+    ...target,
+    ...masterItem,
+    id: target.id,
+    name: masterItem.name,
+    source: "KIS Developers",
+    sourceLabel: "한국투자증권",
+  };
+}
+
+function normalizeWatchlistRow(target, quote, chartPoints = []) {
+  return {
+    id: target.id,
+    name: target.name,
+    symbol: target.symbol,
+    standardCode: target.standardCode,
+    market: target.market,
+    category: "domestic",
+    logo: target.logo,
+    logoTone: target.logoTone,
+    source: "KIS Developers",
+    sourceLabel: "한국투자증권",
+    value: quote.value,
+    percent: quote.percent,
+    change: quote.change,
+    volume: quote.volume,
+    volumeCompare: formatVolumeCompare(quote.volume, target.previousVolume),
+    basePrice: target.basePrice,
+    previousVolume: target.previousVolumeLabel,
+    marketCap: target.marketCap,
+    listedAt: target.listedAt,
+    isEtp: target.isEtp,
+    chartPoints,
+    status: "KIS 시세 조회 완료",
+    raw: {
+      quote: quote.raw,
+      master: target.rawMaster,
+    },
+  };
 }
 
 function wait(ms) {
@@ -320,6 +627,111 @@ export async function getKisDashboard() {
     indices: indices.items,
     stocks: stocks.items,
     errors: [...indices.errors, ...stocks.errors],
+  };
+}
+
+export async function getKisWatchlist() {
+  const now = Date.now();
+  if (watchlistCache.payload && watchlistCache.expiresAt > now) {
+    return {
+      ...watchlistCache.payload,
+      cache: {
+        status: "hit",
+        ttlMs: watchlistCache.expiresAt - now,
+      },
+    };
+  }
+
+  const masterItems = await getStockMaster();
+  const targets = WATCHLIST_TARGETS.map((target) => watchlistTargetFromMaster(target, findMasterItem(masterItems, target.name)));
+  const rows = [];
+  const errors = [];
+
+  for (const target of targets) {
+    if (!target) {
+      errors.push({
+        name: target?.name || "unknown",
+        message: "stocks_info master에서 종목을 찾지 못했습니다.",
+      });
+      continue;
+    }
+
+    try {
+      const quote = await getWatchlistPrice(target);
+      let chartPoints = [];
+      try {
+        chartPoints = await getDailyChart(target);
+      } catch (error) {
+        errors.push({
+          id: target.id,
+          name: target.name,
+          symbol: target.symbol,
+          step: "chart",
+          message: error.message,
+          details: error.details || null,
+        });
+      }
+
+      rows.push(normalizeWatchlistRow(target, quote, chartPoints));
+    } catch (error) {
+      errors.push({
+        id: target.id,
+        name: target.name,
+        symbol: target.symbol,
+        step: "quote",
+        message: error.message,
+        details: error.details || null,
+      });
+      rows.push({
+        id: target.id,
+        name: target.name,
+        symbol: target.symbol,
+        standardCode: target.standardCode,
+        market: target.market,
+        category: "domestic",
+        logo: target.logo,
+        logoTone: target.logoTone,
+        source: "KIS Developers",
+        sourceLabel: "한국투자증권",
+        value: null,
+        percent: null,
+        change: null,
+        volume: null,
+        volumeCompare: null,
+        basePrice: target.basePrice,
+        previousVolume: target.previousVolumeLabel,
+        marketCap: target.marketCap,
+        listedAt: target.listedAt,
+        isEtp: target.isEtp,
+        chartPoints: [],
+        status: `KIS 시세 조회 실패: ${error.message}`,
+      });
+    }
+
+    await wait(180);
+  }
+
+  const payload = {
+    source: "KIS Developers",
+    sourceLabel: "한국투자증권",
+    masterSource: "https://github.com/koreainvestment/open-trading-api/tree/main/stocks_info",
+    refreshedAt: new Date().toISOString(),
+    intervalMs: WATCHLIST_CACHE_MS,
+    rows,
+    errors,
+  };
+
+  watchlistCache = {
+    expiresAt: now + WATCHLIST_CACHE_MS,
+    payload,
+  };
+
+  return {
+    ...payload,
+    cache: {
+      status: "refresh",
+      ttlMs: WATCHLIST_CACHE_MS,
+    },
   };
 }
 

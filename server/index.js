@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
+import { getKisWatchlist } from "./kis.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const root = normalize(join(__dirname, ".."));
@@ -720,8 +721,9 @@ export async function getQuotes() {
     getCachedSavetickerNews(),
     getCachedYahooCharts(),
     getCachedNaverCharts(),
+    getKisWatchlist(),
   ]);
-  const [kospilab, nightFutures, news, yahooCharts, naverCharts] = settled.map((entry) =>
+  const [kospilab, nightFutures, news, yahooCharts, naverCharts, watchlist] = settled.map((entry) =>
     entry.status === "fulfilled" ? entry.value : { error: entry.reason.message },
   );
 
@@ -736,12 +738,14 @@ export async function getQuotes() {
       { label: "Yahoo Finance 지수 fallback", url: "https://finance.yahoo.com/" },
       { label: "Yahoo Finance 1분 차트", url: "https://finance.yahoo.com/" },
       { label: "SaveTicker 뉴스", url: SOURCES.savetickerNews },
+      { label: "한국투자증권 관심 종목", url: "https://github.com/koreainvestment/open-trading-api/tree/main/stocks_info" },
     ],
     kospilab,
     nightFutures,
     news,
     yahooCharts,
     naverCharts,
+    watchlist,
   };
 }
 
@@ -773,6 +777,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     try {
       if (req.url?.startsWith("/api/quotes")) {
         json(res, 200, await getQuotes());
+        return;
+      }
+      if (req.url?.startsWith("/api/kis-watchlist")) {
+        json(res, 200, await getKisWatchlist());
         return;
       }
       await serveStatic(req, res);
