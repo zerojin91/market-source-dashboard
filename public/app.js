@@ -1,6 +1,7 @@
 const POLL_MS = 10000;
 const WATCHLIST_POLL_MS = 5000;
 const WATCHLIST_CHART_CACHE_MS = 30 * 60 * 1000;
+const WATCHLIST_SPARKLINE_POINTS = 96;
 const HISTORY_KEY = "qunatlab.quoteHistory.v1";
 const HISTORY_DAYS = 7;
 const HISTORY_MAX_POINTS_PER_SYMBOL = Math.ceil((HISTORY_DAYS * 24 * 60 * 60 * 1000) / POLL_MS);
@@ -410,6 +411,25 @@ function boardRows(payload) {
   });
 }
 
+function compactChartPoints(points, maxPoints = WATCHLIST_SPARKLINE_POINTS) {
+  const validPoints = (Array.isArray(points) ? points : [])
+    .filter((point) => Number.isFinite(point.t) && Number.isFinite(point.v))
+    .sort((a, b) => a.t - b.t);
+  if (validPoints.length <= maxPoints) return validPoints;
+
+  const start = validPoints[0].t;
+  const end = validPoints.at(-1).t;
+  const span = Math.max(end - start, 1);
+  const buckets = new Array(maxPoints);
+
+  for (const point of validPoints) {
+    const index = Math.min(maxPoints - 1, Math.floor(((point.t - start) / span) * maxPoints));
+    buckets[index] = point;
+  }
+
+  return buckets.filter(Boolean);
+}
+
 function rankingSparkline(row) {
   const key = row.id;
   const history = Array.isArray(state.history[key]) ? state.history[key] : [];
@@ -422,8 +442,9 @@ function rankingSparkline(row) {
   const loadedPoints = Array.isArray(state.watchlistCharts[key]?.points)
     ? state.watchlistCharts[key].points.filter((point) => Number.isFinite(point.t) && Number.isFinite(point.v))
     : [];
-  const chartPoints = loadedPoints.length ? loadedPoints : serverPoints;
-  const values = chartPoints.length
+  const chartPoints = compactChartPoints(loadedPoints.length ? loadedPoints : serverPoints);
+  const hasChartPoints = chartPoints.length >= 2;
+  const values = hasChartPoints
     ? chartPoints.map((point) => point.v)
     : points.length
       ? points.map((point) => point.v)
@@ -434,7 +455,12 @@ function rankingSparkline(row) {
   const scaleValues = [...values, baseline];
   const min = Math.min(...scaleValues);
   const max = Math.max(...scaleValues);
-  const scaleX = (index) => (index / Math.max(values.length - 1, 1)) * width;
+  const startTime = hasChartPoints ? chartPoints[0].t : null;
+  const endTime = hasChartPoints ? chartPoints.at(-1).t : null;
+  const scaleX = (index) => {
+    if (!hasChartPoints) return (index / Math.max(values.length - 1, 1)) * width;
+    return ((chartPoints[index].t - startTime) / Math.max(endTime - startTime, 1)) * width;
+  };
   const scaleY = (value) => 7 + (1 - ((value - min) / Math.max(max - min, 1))) * 38;
   const baselineY = scaleY(baseline);
   const path = values
