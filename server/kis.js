@@ -6,8 +6,9 @@ const MASTER_CACHE_MS = 6 * 60 * 60 * 1000;
 const WATCHLIST_CACHE_MS = 5 * 1000;
 const CHART_CACHE_MS = 30 * 60 * 1000;
 const KIS_REQUEST_GAP_MS = 1400;
-const KIS_CHART_REQUEST_GAP_MS = 450;
+const KIS_CHART_REQUEST_GAP_MS = 1050;
 const INTRADAY_CHART_START_TIME = "090000";
+const INTRADAY_REGULAR_END_TIME = "153000";
 const INTRADAY_CHART_END_TIME = "200000";
 const INTRADAY_CHART_MAX_PAGES = 24;
 
@@ -473,17 +474,26 @@ async function getIntradayChart(target) {
   let endTime = minuteChartEndTime();
 
   for (let page = 0; page < INTRADAY_CHART_MAX_PAGES; page += 1) {
-    const payload = await kisRequest("/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice", {
-      trId: "FHKST03010200",
-      paceMs: KIS_CHART_REQUEST_GAP_MS,
-      params: {
-        FID_ETC_CLS_CODE: "00",
-        FID_COND_MRKT_DIV_CODE: "J",
-        FID_INPUT_ISCD: target.symbol,
-        FID_INPUT_HOUR_1: endTime,
-        FID_PW_DATA_INCU_YN: "N",
-      },
-    });
+    let payload;
+    try {
+      payload = await kisRequest("/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice", {
+        trId: "FHKST03010200",
+        paceMs: KIS_CHART_REQUEST_GAP_MS,
+        params: {
+          FID_ETC_CLS_CODE: "00",
+          FID_COND_MRKT_DIV_CODE: "J",
+          FID_INPUT_ISCD: target.symbol,
+          FID_INPUT_HOUR_1: endTime,
+          FID_PW_DATA_INCU_YN: "N",
+        },
+      });
+    } catch (error) {
+      if (page === 0 && Number(endTime) > Number(INTRADAY_REGULAR_END_TIME)) {
+        endTime = INTRADAY_REGULAR_END_TIME;
+        continue;
+      }
+      throw error;
+    }
 
     const pagePoints = normalizeMinuteChartPoints(payload.output2);
     if (!pagePoints.length) break;
