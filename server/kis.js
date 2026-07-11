@@ -232,8 +232,8 @@ async function getStockPrice(target) {
   const payload = await kisRequest("/uapi/domestic-stock/v1/quotations/inquire-price", {
     trId: "FHKST01010100",
     params: {
-      fid_cond_mrkt_div_code: "J",
-      fid_input_iscd: target.symbol,
+      FID_COND_MRKT_DIV_CODE: "J",
+      FID_INPUT_ISCD: target.symbol,
     },
   });
   return normalizeStockPrice(target, payload.output);
@@ -243,31 +243,34 @@ async function getIndexPrice(target) {
   const payload = await kisRequest("/uapi/domestic-stock/v1/quotations/inquire-index-price", {
     trId: "FHPUP02100000",
     params: {
-      fid_cond_mrkt_div_code: "U",
-      fid_input_iscd: target.code,
+      FID_COND_MRKT_DIV_CODE: "U",
+      FID_INPUT_ISCD: target.code,
     },
   });
   return normalizeIndexPrice(target, payload.output);
 }
 
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function settleItems(targets, fetcher) {
-  const settled = await Promise.allSettled(targets.map(fetcher));
   const items = [];
   const errors = [];
 
-  settled.forEach((entry, index) => {
-    const target = targets[index];
-    if (entry.status === "fulfilled") {
-      items.push(entry.value);
-      return;
+  for (const target of targets) {
+    try {
+      items.push(await fetcher(target));
+    } catch (error) {
+      errors.push({
+        id: target.id,
+        name: target.name,
+        message: error.message,
+        details: error.details || null,
+      });
     }
-    errors.push({
-      id: target.id,
-      name: target.name,
-      message: entry.reason.message,
-      details: entry.reason.details || null,
-    });
-  });
+    await wait(180);
+  }
 
   return { items, errors };
 }
