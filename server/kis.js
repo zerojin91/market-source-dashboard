@@ -5,6 +5,7 @@ const TOKEN_REFRESH_SKEW_MS = 5 * 60 * 1000;
 const MASTER_CACHE_MS = 6 * 60 * 60 * 1000;
 const WATCHLIST_CACHE_MS = 20 * 1000;
 const CHART_CACHE_MS = 60 * 1000;
+const KIS_REQUEST_GAP_MS = 1100;
 
 const MASTER_URLS = {
   KOSPI: "https://new.real.download.dws.co.kr/common/master/kospi_code.mst.zip",
@@ -660,7 +661,7 @@ export async function getKisWatchlist() {
       const quote = await getWatchlistPrice(target);
       let chartPoints = [];
       try {
-        await wait(500);
+        await wait(KIS_REQUEST_GAP_MS);
         chartPoints = await getDailyChart(target);
       } catch (error) {
         errors.push({
@@ -709,7 +710,7 @@ export async function getKisWatchlist() {
       });
     }
 
-    await wait(500);
+    await wait(KIS_REQUEST_GAP_MS);
   }
 
   const payload = {
