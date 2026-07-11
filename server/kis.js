@@ -519,6 +519,29 @@ async function getWatchlistChart(target) {
   return getDailyChart(target);
 }
 
+function getCachedWatchlistChart(target) {
+  return chartCache.get(`intraday:${target.symbol}`)?.points || [];
+}
+
+export async function getKisIntradayChart(symbol) {
+  const normalizedSymbol = String(symbol || "").trim();
+  if (!/^\d{6}$/.test(normalizedSymbol)) {
+    const error = new Error("symbol은 6자리 종목코드여야 합니다.");
+    error.status = 400;
+    throw error;
+  }
+
+  const points = await getIntradayChart({ symbol: normalizedSymbol });
+  return {
+    source: "KIS Developers",
+    sourceLabel: "한국투자증권",
+    symbol: normalizedSymbol,
+    chartPoints: points,
+    intervalMs: CHART_CACHE_MS,
+    refreshedAt: new Date().toISOString(),
+  };
+}
+
 async function getWatchlistPrice(target) {
   if (target.isEtp) return getEtfPrice(target);
   return normalizeWatchlistQuote(target, (await kisRequest("/uapi/domestic-stock/v1/quotations/inquire-price", {
@@ -855,18 +878,7 @@ export async function getKisWatchlist() {
   }
 
   for (const target of validTargets) {
-    try {
-      chartById.set(target.id, await getWatchlistChart(target));
-    } catch (error) {
-      errors.push({
-        id: target.id,
-        name: target.name,
-        symbol: target.symbol,
-        step: "chart",
-        message: error.message,
-        details: error.details || null,
-      });
-    }
+    chartById.set(target.id, getCachedWatchlistChart(target));
   }
 
   for (const target of validTargets) {

@@ -6,6 +6,9 @@
     },
     "api/kis-watchlist.js": {
       "maxDuration": 60
+    },
+    "api/kis-chart.js": {
+      "maxDuration": 60
     }
   },
   "rewrites": [

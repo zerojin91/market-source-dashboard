@@ -1,5 +1,6 @@
 const POLL_MS = 10000;
 const WATCHLIST_POLL_MS = 5000;
+const WATCHLIST_CHART_CACHE_MS = 30 * 60 * 1000;
 const HISTORY_KEY = "qunatlab.quoteHistory.v1";
 const HISTORY_DAYS = 7;
 const HISTORY_MAX_POINTS_PER_SYMBOL = Math.ceil((HISTORY_DAYS * 24 * 60 * 60 * 1000) / POLL_MS);
@@ -11,6 +12,10 @@ const state = {
   nightSocketHasData: false,
   history: loadHistory(),
   chartRanges: {},
+  watchlistCharts: {},
+  watchlistChartQueue: [],
+  watchlistChartRequests: new Set(),
+  watchlistChartQueueRunning: false,
 };
 
 function fmtTime(value) {
@@ -414,8 +419,12 @@ function rankingSparkline(row) {
   const serverPoints = Array.isArray(row.chartPoints)
     ? row.chartPoints.filter((point) => Number.isFinite(point.t) && Number.isFinite(point.v))
     : [];
-  const values = serverPoints.length
-    ? serverPoints.map((point) => point.v)
+  const loadedPoints = Array.isArray(state.watchlistCharts[key]?.points)
+    ? state.watchlistCharts[key].points.filter((point) => Number.isFinite(point.t) && Number.isFinite(point.v))
+    : [];
+  const chartPoints = loadedPoints.length ? loadedPoints : serverPoints;
+  const values = chartPoints.length
+    ? chartPoints.map((point) => point.v)
     : points.length
       ? points.map((point) => point.v)
       : [numericValue(row.value) ?? 0, numericValue(row.value) ?? 0];
@@ -478,6 +487,54 @@ function renderMarketBoard(payload) {
   }
 
   target.innerHTML = rows.map(rankingRow).join("");
+  queueWatchlistCharts(rows);
+}
+
+function queueWatchlistCharts(rows) {
+  const now = Date.now();
+  for (const row of rows) {
+    if (!row.symbol) continue;
+    const cached = state.watchlistCharts[row.id];
+    if (cached && now - cached.fetchedAt < WATCHLIST_CHART_CACHE_MS) continue;
+    if (state.watchlistChartRequests.has(row.id)) continue;
+    if (state.watchlistChartQueue.some((item) => item.id === row.id)) continue;
+    state.watchlistChartQueue.push({ id: row.id, symbol: row.symbol });
+  }
+  processWatchlistChartQueue();
+}
+
+async function processWatchlistChartQueue() {
+  if (state.watchlistChartQueueRunning) return;
+  state.watchlistChartQueueRunning = true;
+
+  while (state.watchlistChartQueue.length) {
+    const row = state.watchlistChartQueue.shift();
+    state.watchlistChartRequests.add(row.id);
+    try {
+      const response = await fetch(`/api/kis-chart?symbol=${encodeURIComponent(row.symbol)}&t=${Date.now()}`, {
+        cache: "no-store",
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload = await response.json();
+      state.watchlistCharts[row.id] = {
+        points: Array.isArray(payload.chartPoints) ? payload.chartPoints : [],
+        fetchedAt: Date.now(),
+      };
+      if (state.lastPayload) renderMarketBoard(state.lastPayload);
+    } catch (error) {
+      state.watchlistCharts[row.id] = {
+        points: [],
+        fetchedAt: Date.now(),
+        error: error.message,
+      };
+    } finally {
+      state.watchlistChartRequests.delete(row.id);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+  }
+
+  state.watchlistChartQueueRunning = false;
 }
 
 function setupNewsTabs() {

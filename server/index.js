@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getKisWatchlist } from "./kis.js";
+import { getKisIntradayChart, getKisWatchlist } from "./kis.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const root = normalize(join(__dirname, ".."));
@@ -778,6 +778,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       }
       if (req.url?.startsWith("/api/kis-watchlist")) {
         json(res, 200, await getKisWatchlist());
+        return;
+      }
+      if (req.url?.startsWith("/api/kis-chart")) {
+        const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+        json(res, 200, await getKisIntradayChart(url.searchParams.get("symbol")));
         return;
       }
       await serveStatic(req, res);
