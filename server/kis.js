@@ -43,6 +43,21 @@ function kisConfig() {
   return { apiBase, appKey, appSecret };
 }
 
+function kisAccountConfig() {
+  const accountNo = envValue("KIS_ACCOUNT_NO");
+  const productCode = envValue("KIS_ACCOUNT_PRODUCT_CODE");
+
+  if (!accountNo || !productCode) {
+    const missing = [
+      !accountNo ? "KIS_ACCOUNT_NO" : null,
+      !productCode ? "KIS_ACCOUNT_PRODUCT_CODE" : null,
+    ].filter(Boolean);
+    throw new Error(`Missing KIS account environment variables: ${missing.join(", ")}`);
+  }
+
+  return { accountNo, productCode };
+}
+
 async function parseResponseBody(response) {
   const text = await response.text();
   if (!text) return null;
@@ -181,6 +196,11 @@ function signedPercent(value) {
   return `${number > 0 ? "+" : ""}${number.toFixed(2)}%`;
 }
 
+function maskAccountNo(accountNo) {
+  if (!accountNo) return null;
+  return `${String(accountNo).slice(0, 2)}****${String(accountNo).slice(-2)}`;
+}
+
 function normalizeStockPrice(target, output = {}) {
   return {
     id: target.id,
@@ -300,5 +320,66 @@ export async function getKisDashboard() {
     indices: indices.items,
     stocks: stocks.items,
     errors: [...indices.errors, ...stocks.errors],
+  };
+}
+
+function normalizeBalanceItem(item = {}) {
+  return {
+    symbol: item.pdno || null,
+    name: item.prdt_name || null,
+    quantity: formatNumber(item.hldg_qty),
+    sellableQuantity: formatNumber(item.ord_psbl_qty),
+    averagePrice: formatNumber(item.pchs_avg_pric),
+    currentPrice: formatNumber(item.prpr),
+    purchaseAmount: formatNumber(item.pchs_amt),
+    evaluationAmount: formatNumber(item.evlu_amt),
+    profitLoss: signedNumber(item.evlu_pfls_amt),
+    profitLossRate: signedPercent(item.evlu_pfls_rt),
+    raw: item,
+  };
+}
+
+function normalizeBalanceSummary(summary = {}) {
+  return {
+    purchaseAmount: formatNumber(summary.pchs_amt_smtl_amt),
+    evaluationAmount: formatNumber(summary.tot_evlu_amt),
+    profitLoss: signedNumber(summary.evlu_pfls_smtl_amt),
+    profitLossRate: signedPercent(summary.asst_icdc_erng_rt),
+    cash: formatNumber(summary.dnca_tot_amt),
+    totalAmount: formatNumber(summary.tot_evlu_amt),
+    raw: summary,
+  };
+}
+
+export async function getKisBalance() {
+  const { accountNo, productCode } = kisAccountConfig();
+  const payload = await kisRequest("/uapi/domestic-stock/v1/trading/inquire-balance", {
+    trId: "TTTC8434R",
+    params: {
+      CANO: accountNo,
+      ACNT_PRDT_CD: productCode,
+      AFHR_FLPR_YN: "N",
+      OFL_YN: "",
+      INQR_DVSN: "02",
+      UNPR_DVSN: "01",
+      FUND_STTL_ICLD_YN: "N",
+      FNCG_AMT_AUTO_RDPT_YN: "N",
+      PRCS_DVSN: "01",
+      CTX_AREA_FK100: "",
+      CTX_AREA_NK100: "",
+    },
+  });
+
+  return {
+    ok: true,
+    source: "KIS Developers",
+    sourceLabel: "한국투자증권",
+    account: {
+      accountNo: maskAccountNo(accountNo),
+      productCode,
+    },
+    refreshedAt: new Date().toISOString(),
+    holdings: (Array.isArray(payload.output1) ? payload.output1 : []).map(normalizeBalanceItem),
+    summary: normalizeBalanceSummary(Array.isArray(payload.output2) ? payload.output2[0] : payload.output2),
   };
 }
