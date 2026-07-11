@@ -1,5 +1,5 @@
 const POLL_MS = 10000;
-const WATCHLIST_POLL_MS = 30000;
+const WATCHLIST_POLL_MS = 5000;
 const HISTORY_KEY = "qunatlab.quoteHistory.v1";
 const HISTORY_DAYS = 7;
 const HISTORY_MAX_POINTS_PER_SYMBOL = Math.ceil((HISTORY_DAYS * 24 * 60 * 60 * 1000) / POLL_MS);

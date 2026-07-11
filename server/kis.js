@@ -3,7 +3,7 @@ import { inflateRawSync } from "node:zlib";
 const KIS_DEFAULT_API_BASE = "https://openapi.koreainvestment.com:9443";
 const TOKEN_REFRESH_SKEW_MS = 5 * 60 * 1000;
 const MASTER_CACHE_MS = 6 * 60 * 60 * 1000;
-const WATCHLIST_CACHE_MS = 20 * 1000;
+const WATCHLIST_CACHE_MS = 5 * 1000;
 const CHART_CACHE_MS = 60 * 1000;
 const KIS_REQUEST_GAP_MS = 1400;
 
@@ -382,6 +382,38 @@ async function getWatchlistPrice(target) {
   })).output);
 }
 
+async function getWatchlistMultiPrices(targets) {
+  const params = {};
+  targets.forEach((target, index) => {
+    const number = index + 1;
+    params[`FID_COND_MRKT_DIV_CODE_${number}`] = "J";
+    params[`FID_INPUT_ISCD_${number}`] = target.symbol;
+  });
+
+  const payload = await kisRequest("/uapi/domestic-stock/v1/quotations/intstock-multprice", {
+    trId: "FHKST11300006",
+    params,
+  });
+
+  const output = Array.isArray(payload.output)
+    ? payload.output
+    : Array.isArray(payload.output1)
+      ? payload.output1
+      : payload.output
+        ? [payload.output]
+        : [];
+
+  return targets.map((target, index) => {
+    const row = output.find((item) =>
+      item.stck_shrn_iscd === target.symbol ||
+      item.mksc_shrn_iscd === target.symbol ||
+      item.jong_code === target.symbol ||
+      item.pdno === target.symbol,
+    ) || output[index] || {};
+    return [target.id, normalizeWatchlistQuote(target, row)];
+  });
+}
+
 async function getIndexPrice(target) {
   const payload = await kisRequest("/uapi/domestic-stock/v1/quotations/inquire-index-price", {
     trId: "FHPUP02100000",
@@ -647,8 +679,32 @@ export async function getKisWatchlist() {
   const targets = WATCHLIST_TARGETS.map((target) => watchlistTargetFromMaster(target, findMasterItem(masterItems, target.name)));
   const rows = [];
   const errors = [];
+  const validTargets = targets.filter(Boolean);
+  const quoteById = new Map();
 
-  for (const target of targets) {
+  for (const target of WATCHLIST_TARGETS) {
+    if (!validTargets.find((item) => item.id === target.id)) {
+      errors.push({
+        id: target.id,
+        name: target.name,
+        step: "master",
+        message: "stocks_info master에서 종목을 찾지 못했습니다.",
+      });
+    }
+  }
+
+  try {
+    const quotes = await getWatchlistMultiPrices(validTargets);
+    for (const [id, quote] of quotes) quoteById.set(id, quote);
+  } catch (error) {
+    errors.push({
+      step: "quote",
+      message: error.message,
+      details: error.details || null,
+    });
+  }
+
+  for (const target of validTargets) {
     if (!target) {
       errors.push({
         name: target?.name || "unknown",
@@ -657,24 +713,10 @@ export async function getKisWatchlist() {
       continue;
     }
 
+    const quote = quoteById.get(target.id);
     try {
-      const quote = await getWatchlistPrice(target);
-      let chartPoints = [];
-      try {
-        await wait(KIS_REQUEST_GAP_MS);
-        chartPoints = await getDailyChart(target);
-      } catch (error) {
-        errors.push({
-          id: target.id,
-          name: target.name,
-          symbol: target.symbol,
-          step: "chart",
-          message: error.message,
-          details: error.details || null,
-        });
-      }
-
-      rows.push(normalizeWatchlistRow(target, quote, chartPoints));
+      if (!quote) throw new Error("KIS 멀티 시세 응답에 종목 값이 없습니다.");
+      rows.push(normalizeWatchlistRow(target, quote, []));
     } catch (error) {
       errors.push({
         id: target.id,
@@ -709,8 +751,6 @@ export async function getKisWatchlist() {
         status: `KIS 시세 조회 실패: ${error.message}`,
       });
     }
-
-    await wait(KIS_REQUEST_GAP_MS);
   }
 
   const payload = {
