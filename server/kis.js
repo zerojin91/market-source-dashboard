@@ -435,7 +435,7 @@ async function getIntradayChart(target) {
   const payload = await kisRequest("/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice", {
     trId: "FHKST03010200",
     params: {
-      FID_ETC_CLS_CODE: "",
+      FID_ETC_CLS_CODE: "00",
       FID_COND_MRKT_DIV_CODE: "J",
       FID_INPUT_ISCD: target.symbol,
       FID_INPUT_HOUR_1: minuteChartEndTime(),
