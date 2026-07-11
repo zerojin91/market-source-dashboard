@@ -10,7 +10,6 @@ const state = {
   nightSocketHasData: false,
   history: loadHistory(),
   chartRanges: {},
-  boardFilter: "all",
 };
 
 const BOARD_FALLBACK_ROWS = [
@@ -539,7 +538,7 @@ function renderMarketBoard(payload) {
   const target = $("#rankingTableBody");
   if (!target) return;
 
-  const rows = boardRows(payload).filter((row) => state.boardFilter === "all" || row.category === state.boardFilter);
+  const rows = boardRows(payload);
   if (!rows.length) {
     target.innerHTML = `
       <tr>
@@ -550,18 +549,6 @@ function renderMarketBoard(payload) {
   }
 
   target.innerHTML = rows.map(rankingRow).join("");
-}
-
-function setupBoardTabs() {
-  document.querySelectorAll(".board-tab").forEach((tab) => {
-    tab.addEventListener("click", () => {
-      state.boardFilter = tab.dataset.boardFilter || "all";
-      document.querySelectorAll(".board-tab").forEach((button) => {
-        button.classList.toggle("active", button === tab);
-      });
-      if (state.lastPayload) renderMarketBoard(state.lastPayload);
-    });
-  });
 }
 
 function setupNewsTabs() {
@@ -768,7 +755,6 @@ function connectNightSocket() {
   }
 }
 
-setupBoardTabs();
 setupNewsTabs();
 loadQuotes();
 setInterval(loadQuotes, POLL_MS);

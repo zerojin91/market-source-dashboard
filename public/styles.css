@@ -383,59 +383,9 @@ h2 {
   box-shadow: var(--shadow);
 }
 
-.board-toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 18px;
-  padding: 28px 24px 18px;
-}
-
-.board-mode {
-  display: inline-flex;
-  align-items: center;
-  min-height: 42px;
-  padding: 0 22px;
-  border-radius: 999px;
-  background: #f4f5f7;
-  color: #334155;
-  font-size: 18px;
-  font-weight: 820;
-}
-
-.board-tabs {
-  display: inline-grid;
-  grid-template-columns: repeat(5, minmax(92px, 1fr));
-  gap: 0;
-  padding: 4px;
-  border: 1px solid #e5e7eb;
-  border-radius: 14px;
-  background: #f2f3f5;
-}
-
-.board-tab {
-  min-height: 42px;
-  padding: 0 16px;
-  border: 0;
-  border-radius: 11px;
-  background: transparent;
-  color: #64748b;
-  font: inherit;
-  font-size: 16px;
-  font-weight: 800;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.board-tab.active {
-  background: #ffffff;
-  color: #1f2937;
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12);
-}
-
 .board-scroll {
   overflow-x: auto;
-  padding: 0 16px 24px;
+  padding: 22px 16px 24px;
 }
 
 .ranking-table {
@@ -806,20 +756,6 @@ h2 {
     grid-template-columns: 1fr 1fr;
   }
 
-  .board-toolbar {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .board-tabs {
-    width: 100%;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-  }
-
-  .board-tab {
-    padding: 0 10px;
-    font-size: 14px;
-  }
 }
 
 @media (max-width: 700px) {
@@ -898,30 +834,8 @@ h2 {
     border-radius: 18px;
   }
 
-  .board-toolbar {
-    padding: 18px 14px 12px;
-  }
-
-  .board-mode {
-    min-height: 38px;
-    padding: 0 16px;
-    font-size: 15px;
-  }
-
-  .board-tabs {
-    overflow-x: auto;
-    display: flex;
-    max-width: 100%;
-  }
-
-  .board-tab {
-    flex: 0 0 auto;
-    min-width: 82px;
-    min-height: 38px;
-  }
-
   .board-scroll {
-    padding: 0 8px 16px;
+    padding: 12px 8px 16px;
   }
 
   h2 {
