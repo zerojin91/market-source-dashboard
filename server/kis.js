@@ -4,7 +4,7 @@ const KIS_DEFAULT_API_BASE = "https://openapi.koreainvestment.com:9443";
 const TOKEN_REFRESH_SKEW_MS = 5 * 60 * 1000;
 const MASTER_CACHE_MS = 6 * 60 * 60 * 1000;
 const WATCHLIST_CACHE_MS = 5 * 1000;
-const CHART_CACHE_MS = 60 * 1000;
+const CHART_CACHE_MS = 5 * 60 * 1000;
 const KIS_REQUEST_GAP_MS = 1400;
 
 const MASTER_URLS = {
@@ -39,6 +39,7 @@ let watchlistCache = {
 };
 
 let chartCache = new Map();
+let lastKisRequestAt = 0;
 
 const INDEX_TARGETS = [
   { id: "kospi", name: "KOSPI", code: "0001" },
@@ -176,6 +177,10 @@ async function kisRequest(path, { trId, params = {} } = {}) {
       url.searchParams.set(key, value);
     }
   }
+
+  const elapsed = Date.now() - lastKisRequestAt;
+  if (elapsed < KIS_REQUEST_GAP_MS) await wait(KIS_REQUEST_GAP_MS - elapsed);
+  lastKisRequestAt = Date.now();
 
   const response = await fetch(url, {
     method: "GET",
@@ -682,6 +687,7 @@ export async function getKisWatchlist() {
   const errors = [];
   const validTargets = targets.filter(Boolean);
   const quoteById = new Map();
+  const chartById = new Map();
 
   for (const target of WATCHLIST_TARGETS) {
     if (!validTargets.find((item) => item.id === target.id)) {
@@ -706,6 +712,21 @@ export async function getKisWatchlist() {
   }
 
   for (const target of validTargets) {
+    try {
+      chartById.set(target.id, await getDailyChart(target));
+    } catch (error) {
+      errors.push({
+        id: target.id,
+        name: target.name,
+        symbol: target.symbol,
+        step: "chart",
+        message: error.message,
+        details: error.details || null,
+      });
+    }
+  }
+
+  for (const target of validTargets) {
     if (!target) {
       errors.push({
         name: target?.name || "unknown",
@@ -715,9 +736,10 @@ export async function getKisWatchlist() {
     }
 
     const quote = quoteById.get(target.id);
+    const chartPoints = chartById.get(target.id) || [];
     try {
       if (!quote) throw new Error("KIS 멀티 시세 응답에 종목 값이 없습니다.");
-      rows.push(normalizeWatchlistRow(target, quote, []));
+      rows.push(normalizeWatchlistRow(target, quote, chartPoints));
     } catch (error) {
       errors.push({
         id: target.id,
