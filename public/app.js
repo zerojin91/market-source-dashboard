@@ -421,21 +421,24 @@ function rankingSparkline(row) {
       : [numericValue(row.value) ?? 0, numericValue(row.value) ?? 0];
   const width = 150;
   const height = 58;
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+  const baseline = numericValue(row.basePrice) ?? values.at(-1) ?? numericValue(row.value) ?? 0;
+  const scaleValues = [...values, baseline];
+  const min = Math.min(...scaleValues);
+  const max = Math.max(...scaleValues);
   const scaleX = (index) => (index / Math.max(values.length - 1, 1)) * width;
   const scaleY = (value) => 7 + (1 - ((value - min) / Math.max(max - min, 1))) * 38;
+  const baselineY = scaleY(baseline);
   const path = values
     .map((value, index) => `${index === 0 ? "M" : "L"}${scaleX(index).toFixed(1)},${scaleY(value).toFixed(1)}`)
     .join(" ");
-  const areaPath = `${path} L${width},${height - 5} L0,${height - 5} Z`;
+  const areaPath = `${path} L${width},${baselineY.toFixed(1)} L0,${baselineY.toFixed(1)} Z`;
   const tone = directionClass(row.change, row.percent) || "up";
 
   return `
     <svg class="ranking-sparkline ${tone}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-label="${escapeHtml(row.name)} 차트">
       <path class="ranking-sparkline-area" d="${areaPath}"></path>
       <path class="ranking-sparkline-line" d="${path}"></path>
-      <line class="ranking-sparkline-base" x1="0" x2="${width}" y1="${height - 6}" y2="${height - 6}"></line>
+      <line class="ranking-sparkline-base" x1="0" x2="${width}" y1="${baselineY.toFixed(1)}" y2="${baselineY.toFixed(1)}"></line>
     </svg>
   `;
 }
