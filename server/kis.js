@@ -332,7 +332,31 @@ function chartDate(daysAgo = 0) {
   ].join("");
 }
 
-function normalizeChartPoints(output = []) {
+function koreaClockParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    hour12: false,
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(date);
+  return Object.fromEntries(parts.map((part) => [part.type, part.value]));
+}
+
+function minuteChartEndTime() {
+  const parts = koreaClockParts();
+  const hour = Number(parts.hour);
+  const minute = Number(parts.minute);
+  const second = Number(parts.second);
+  const current = hour * 10000 + minute * 100 + second;
+  const isWeekday = !["Sat", "Sun"].includes(parts.weekday);
+  if (!isWeekday || current > 153000) return "153000";
+  if (current < 90000) return "090000";
+  return `${String(hour).padStart(2, "0")}${String(minute).padStart(2, "0")}${String(second).padStart(2, "0")}`;
+}
+
+function normalizeDailyChartPoints(output = []) {
   return (Array.isArray(output) ? output : [])
     .map((row) => {
       const date = row.stck_bsop_date || row.bsop_date || row.date;
@@ -350,8 +374,34 @@ function normalizeChartPoints(output = []) {
     .sort((a, b) => a.t - b.t);
 }
 
+function normalizeMinuteChartPoints(output = []) {
+  const seen = new Set();
+  return (Array.isArray(output) ? output : [])
+    .map((row) => {
+      const date = row.stck_bsop_date || row.bsop_date || row.date;
+      const time = row.stck_cntg_hour || row.cntg_hour || row.time;
+      const value = numberLike(row.stck_prpr || row.stck_clpr || row.clpr || row.nav);
+      if (!date || !time || value === null) return null;
+      const key = `${date}${time}`;
+      if (seen.has(key)) return null;
+      seen.add(key);
+      const year = Number(String(date).slice(0, 4));
+      const month = Number(String(date).slice(4, 6)) - 1;
+      const day = Number(String(date).slice(6, 8));
+      const hour = Number(String(time).slice(0, 2));
+      const minute = Number(String(time).slice(2, 4));
+      const second = Number(String(time).slice(4, 6));
+      return {
+        t: Date.UTC(year, month, day, hour - 9, minute, second),
+        v: value,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.t - b.t);
+}
+
 async function getDailyChart(target) {
-  const cacheKey = target.symbol;
+  const cacheKey = `daily:${target.symbol}`;
   const cached = chartCache.get(cacheKey);
   const now = Date.now();
   if (cached && cached.expiresAt > now) return cached.points;
@@ -368,12 +418,43 @@ async function getDailyChart(target) {
     },
   });
 
-  const points = normalizeChartPoints(payload.output2);
+  const points = normalizeDailyChartPoints(payload.output2);
   chartCache.set(cacheKey, {
     expiresAt: now + CHART_CACHE_MS,
     points,
   });
   return points;
+}
+
+async function getIntradayChart(target) {
+  const cacheKey = `intraday:${target.symbol}`;
+  const cached = chartCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && cached.expiresAt > now) return cached.points;
+
+  const payload = await kisRequest("/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice", {
+    trId: "FHKST03010200",
+    params: {
+      FID_ETC_CLS_CODE: "",
+      FID_COND_MRKT_DIV_CODE: "J",
+      FID_INPUT_ISCD: target.symbol,
+      FID_INPUT_HOUR_1: minuteChartEndTime(),
+      FID_PW_DATA_INCU_YN: "N",
+    },
+  });
+
+  const points = normalizeMinuteChartPoints(payload.output2);
+  chartCache.set(cacheKey, {
+    expiresAt: now + CHART_CACHE_MS,
+    points,
+  });
+  return points;
+}
+
+async function getWatchlistChart(target) {
+  const points = await getIntradayChart(target);
+  if (points.length) return points;
+  return getDailyChart(target);
 }
 
 async function getWatchlistPrice(target) {
@@ -713,7 +794,7 @@ export async function getKisWatchlist() {
 
   for (const target of validTargets) {
     try {
-      chartById.set(target.id, await getDailyChart(target));
+      chartById.set(target.id, await getWatchlistChart(target));
     } catch (error) {
       errors.push({
         id: target.id,
