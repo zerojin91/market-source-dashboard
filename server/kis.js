@@ -21,10 +21,16 @@ const STOCK_TARGETS = [
   { id: "lg-energy-solution", name: "LG에너지솔루션", symbol: "373220" },
 ];
 
+function envValue(name) {
+  const value = process.env[name];
+  if (!value) return "";
+  return value.startsWith(`${name}=`) ? value.slice(name.length + 1) : value;
+}
+
 function kisConfig() {
-  const appKey = process.env.KIS_APP_KEY;
-  const appSecret = process.env.KIS_APP_SECRET;
-  const apiBase = (process.env.KIS_BASE_URL || KIS_DEFAULT_API_BASE).replace(/\/+$/, "");
+  const appKey = envValue("KIS_APP_KEY");
+  const appSecret = envValue("KIS_APP_SECRET");
+  const apiBase = (envValue("KIS_BASE_URL") || KIS_DEFAULT_API_BASE).replace(/\/+$/, "");
 
   if (!appKey || !appSecret) {
     const missing = [
