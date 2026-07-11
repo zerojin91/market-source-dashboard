@@ -256,8 +256,8 @@ function normalizeStockPrice(target, output = {}) {
 }
 
 function normalizeWatchlistQuote(target, output = {}) {
-  const current = output.stck_prpr || output.last || output.nav || output.etf_prpr;
-  const change = output.prdy_vrss || output.bstp_nmix_prdy_vrss || output.nav_prdy_vrss;
+  const current = output.stck_prpr || output.inter2_prpr || output.last || output.nav || output.etf_prpr;
+  const change = output.prdy_vrss || output.inter2_prdy_vrss || output.bstp_nmix_prdy_vrss || output.nav_prdy_vrss;
   const percent = output.prdy_ctrt || output.bstp_nmix_prdy_ctrt || output.nav_prdy_ctrt;
   const volume = output.acml_vol || output.hts_avls || output.total_vol;
 
@@ -406,6 +406,7 @@ async function getWatchlistMultiPrices(targets) {
   return targets.map((target, index) => {
     const row = output.find((item) =>
       item.stck_shrn_iscd === target.symbol ||
+      item.inter_shrn_iscd === target.symbol ||
       item.mksc_shrn_iscd === target.symbol ||
       item.jong_code === target.symbol ||
       item.pdno === target.symbol,
