@@ -4,9 +4,9 @@ const KIS_DEFAULT_API_BASE = "https://openapi.koreainvestment.com:9443";
 const TOKEN_REFRESH_SKEW_MS = 5 * 60 * 1000;
 const MASTER_CACHE_MS = 6 * 60 * 60 * 1000;
 const WATCHLIST_CACHE_MS = 5 * 1000;
-const CHART_CACHE_MS = 5 * 60 * 1000;
+const CHART_CACHE_MS = 30 * 60 * 1000;
 const KIS_REQUEST_GAP_MS = 1400;
-const KIS_CHART_REQUEST_GAP_MS = 120;
+const KIS_CHART_REQUEST_GAP_MS = 450;
 const INTRADAY_CHART_START_TIME = "090000";
 const INTRADAY_CHART_END_TIME = "200000";
 const INTRADAY_CHART_MAX_PAGES = 24;
@@ -854,29 +854,18 @@ export async function getKisWatchlist() {
     });
   }
 
-  for (let index = 0; index < validTargets.length; index += 2) {
-    const group = validTargets.slice(index, index + 2);
-    const chartResults = await Promise.all(group.map(async (target) => {
-      try {
-        return { target, points: await getWatchlistChart(target) };
-      } catch (error) {
-        return { target, error };
-      }
-    }));
-
-    for (const result of chartResults) {
-      if (result.error) {
-        errors.push({
-          id: result.target.id,
-          name: result.target.name,
-          symbol: result.target.symbol,
-          step: "chart",
-          message: result.error.message,
-          details: result.error.details || null,
-        });
-        continue;
-      }
-      chartById.set(result.target.id, result.points);
+  for (const target of validTargets) {
+    try {
+      chartById.set(target.id, await getWatchlistChart(target));
+    } catch (error) {
+      errors.push({
+        id: target.id,
+        name: target.name,
+        symbol: target.symbol,
+        step: "chart",
+        message: error.message,
+        details: error.details || null,
+      });
     }
   }
 
